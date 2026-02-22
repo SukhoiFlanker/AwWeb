@@ -16,6 +16,17 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Supabase
+
+本项目依赖 Supabase Postgres 表结构，SQL 在 `SUPABASE_SCHEMA.sql`：
+
+- 旧的 `/api/feedback` 写入 `public.feedback`
+- 新的互动留言板 `/feedback` 使用：
+  - `public.guestbook_entries`（留言/评论）
+  - `public.guestbook_reactions`（点赞/点踩）
+
+如果你访问 `/feedback` 时提示表不存在，请先在 Supabase SQL Editor 执行 `SUPABASE_SCHEMA.sql`（包含 Guestbook 段落）。
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
