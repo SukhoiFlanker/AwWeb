@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { requireVisitorKey } from "@/lib/guestbook/visitor";
 
 const BodySchema = z.object({
@@ -20,7 +20,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const supabase = createSupabaseServerClient();
+    const supabase = createSupabaseServiceRoleClient();
     const { entryId, value } = parsed.data;
 
     const { data: entry, error: eErr } = await supabase
@@ -59,7 +59,7 @@ export async function POST(req: Request) {
     const { error } = await supabase
       .from("guestbook_reactions")
       .upsert(
-        { entry_id: entryId, user_key: visitorKey, value },
+        { entry_id: entryId, visitor_id: visitorKey, user_key: visitorKey, value },
         { onConflict: "entry_id,user_key" }
       );
 

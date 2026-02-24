@@ -23,10 +23,20 @@ export default function ChatPage() {
       return;
     }
 
-    const history = (data.history || [])
-      .filter((x: any) => x.role === "user" || x.role === "assistant")
-      .map((x: any) => ({ role: x.role, content: x.content })) as Msg[];
+        const historyRaw: unknown = (data as { history?: unknown }).history;
 
+    const isMsgLike = (x: unknown): x is Msg => {
+      if (!x || typeof x !== "object") return false;
+      const o = x as Record<string, unknown>;
+      const role = o.role;
+      const content = o.content;
+      return (
+        (role === "user" || role === "assistant") &&
+        typeof content === "string"
+      );
+    };
+
+    const history = Array.isArray(historyRaw) ? historyRaw.filter(isMsgLike) : [];
     setMsgs(history);
   }
 

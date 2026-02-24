@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+import { z } from "zod";
 
-type ChatBody = {
-  message?: string;
-  sessionId?: string;
-};
+const ChatBodySchema = z.object({
+  message: z.string().trim().min(1),
+  sessionId: z.string().trim().optional(),
+});
 
 type OllamaMsg = { role: "system" | "user" | "assistant"; content: string };
 
@@ -16,20 +17,19 @@ function isUuid(value: string): boolean {
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => null)) as ChatBody | null;
-    const message = typeof body?.message === "string" ? body.message.trim() : "";
-    const sessionIdRaw =
-      typeof body?.sessionId === "string" ? body.sessionId.trim() : null;
-    const sessionId = sessionIdRaw && isUuid(sessionIdRaw) ? sessionIdRaw : null;
-
-    if (!message) {
+    const raw: unknown = await req.json().catch(() => null);
+    const parsedBody = ChatBodySchema.safeParse(raw);
+    if (!parsedBody.success) {
       return NextResponse.json(
-        { success: false, error: "message is required" },
+        { success: false, error: "Invalid body", issues: parsedBody.error.issues },
         { status: 400 }
       );
     }
+    const message = parsedBody.data.message;
+    const sessionIdRaw = parsedBody.data.sessionId ?? null;
+    const sessionId = sessionIdRaw && isUuid(sessionIdRaw) ? sessionIdRaw : null;
 
-    const supabase = createSupabaseServerClient();
+    const supabase = createSupabaseServiceRoleClient();
 
     // 1) 确保 session
     let sid = sessionId;
@@ -166,9 +166,10 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ success: true, sessionId: sid, reply });
-  } catch (e: any) {
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Unknown error";
     return NextResponse.json(
-      { success: false, error: e?.message ?? "Unknown error" },
+      { success: false, error: message },
       { status: 500 }
     );
   }

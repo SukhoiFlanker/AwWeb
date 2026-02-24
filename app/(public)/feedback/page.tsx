@@ -1,8 +1,8 @@
 "use client";
 
 import { useId } from "react";
-import { useEffect, useMemo, useState } from "react";
-import { guestbookFetch, getOrCreateVisitorId } from "@/lib/guestbook/client";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { guestbookFetch } from "@/lib/guestbook/client";
 
 type GuestbookEntry = {
   id: string;
@@ -504,15 +504,26 @@ export default function FeedbackPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [mode, setMode] = useState<"all" | "mine" | "trash">("all");
 
-  const [visitorId, setVisitorId] = useState<string>("");
-
-useEffect(() => {
-  setVisitorId(getOrCreateVisitorId());
-}, []);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
 
-  async function loadList() {
+  function gotoLogin() {
+  const next = encodeURIComponent(window.location.pathname + window.location.search);
+  window.location.href = `/login?next=${next}`;
+}
+
+async function guardAuthOrThrow(res: Response, data: any) {
+  if (res.status === 401) {
+    setNotice("请先登录");
+    gotoLogin();
+    throw new Error("Unauthorized");
+  }
+  if (!res.ok || !data?.success) {
+    throw new Error(data?.error || `请求失败（${res.status}）`);
+  }
+}
+
+  const loadList = useCallback(async () => {
     setNotice(null);
     setLoading(true);
      try {
@@ -559,7 +570,7 @@ useEffect(() => {
     } finally {
       setLoading(false);
     }
-  }
+  }, [mode, searchQuery]);
 
   async function loadDetail(id: string) {
     setActiveId(id);
@@ -606,67 +617,82 @@ useEffect(() => {
   }
 
   async function postRoot(p: { authorName?: string; content: string; contentType: "plain" | "md" }) {
-    const res = await guestbookFetch("/api/guestbook", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(p),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data?.success) {
-      throw new Error(data?.error || `发送失败（${res.status}）`);
-    }
-    await loadList();
-  }
+  const res = await guestbookFetch("/api/guestbook/entry", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(p),
+  });
+  const data = await res.json().catch(() => ({}));
+  await guardAuthOrThrow(res, data);
+  await loadList();
+}
 
-  async function postComment(parentId: string, p: { authorName?: string; content: string; contentType: "plain" | "md" }) {
-    const res = await guestbookFetch("/api/guestbook", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...p, parentId }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data?.success) {
-      throw new Error(data?.error || `发送失败（${res.status}）`);
-    }
-    await loadDetail(activeId!);
-    await loadList();
-  }
+  async function postComment(
+  parentId: string,
+  p: { authorName?: string; content: string; contentType: "plain" | "md" }
+) {
+  const res = await guestbookFetch("/api/guestbook/entry", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...p, parentId }),
+  });
+  const data = await res.json().catch(() => ({}));
+  await guardAuthOrThrow(res, data);
+
+  if (activeId) await loadDetail(activeId);
+  await loadList();
+}
 
   async function react(entryId: string, value: -1 | 0 | 1) {
-    const res = await guestbookFetch("/api/guestbook/react", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ entryId, value }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data?.success) {
-      setNotice(data?.error || `操作失败（${res.status}）`);
-      return;
-    }
-    await loadList();
-    if (activeId) await loadDetail(activeId);
+  const res = await guestbookFetch("/api/guestbook/reaction", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ entryId, value }),
+  });
+  const data = await res.json().catch(() => ({}));
+
+  if (res.status === 401) {
+    setNotice("请先登录后再点赞/点踩");
+    gotoLogin();
+    return;
   }
+  if (!res.ok || !data?.success) {
+    setNotice(data?.error || `操作失败（${res.status}）`);
+    return;
+  }
+
+  await loadList();
+  if (activeId) await loadDetail(activeId);
+}
 
   async function del(entryId: string) {
-    if (!confirm("确定删除这条留言吗？")) return;
-    const res = await guestbookFetch(`/api/guestbook/${entryId}`, { method: "DELETE" });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data?.success) {
-      setNotice(data?.error || `删除失败（${res.status}）`);
-      return;
-    }
-    await loadList();
-    if (activeId === entryId) {
-      setActiveId(null);
-      setActiveDetail(null);
-    } else if (activeId) {
-      await loadDetail(activeId);
-    }
+  if (!confirm("确定删除这条留言吗？")) return;
+
+  const res = await guestbookFetch(`/api/guestbook/entry/${entryId}`, { method: "DELETE" });
+  const data = await res.json().catch(() => ({}));
+
+  if (res.status === 401) {
+    setNotice("请先登录后再删除");
+    gotoLogin();
+    return;
+  }
+  if (!res.ok || !data?.success) {
+    setNotice(data?.error || `删除失败（${res.status}）`);
+    return;
   }
 
+  await loadList();
+  if (activeId === entryId) {
+    setActiveId(null);
+    setActiveDetail(null);
+  } else if (activeId) {
+    await loadDetail(activeId);
+  }
+}
+
   useEffect(() => {
-  void loadList();
-}, [searchQuery, mode]);
+    void loadList();
+  }, [loadList]);
 
   const visibleEntries = useMemo(() => {
     if (mode === "trash") return entries.filter((e) => e.deleted);
@@ -681,7 +707,7 @@ useEffect(() => {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">留言板</h1>
           <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-            支持历史留言、点赞/点踩、评论与删除（仅限本设备/浏览器生成的身份）。
+            留下评论，分享想法，交流反馈。支持 Markdown 格式，尽情发挥吧（请登录并保持礼貌）！
           </p>
         </div>
         <button
@@ -749,9 +775,6 @@ useEffect(() => {
         >
           {loading ? "搜索中..." : "搜索"}
         </button>
-        <span className="ml-auto text-xs text-zinc-500 dark:text-zinc-400">
-          visitor: {visitorId ? `${visitorId.slice(0, 8)}…` : "…"}
-        </span>
       </div>
 
       <div className="mt-6">

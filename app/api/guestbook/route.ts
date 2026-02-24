@@ -1,16 +1,27 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { parseVisitorKey, requireVisitorKey } from "@/lib/guestbook/visitor";
+import { supabaseServer, createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+
+export const dynamic = "force-dynamic";
 
 const ContentTypeSchema = z.enum(["plain", "md"]).default("plain");
 
-const PostBodySchema = z.object({
-  authorName: z.string().trim().max(40).optional(),
-  content: z.string().trim().min(1).max(5000),
-  contentType: ContentTypeSchema.optional(),
-  parentId: z.string().uuid().nullable().optional(),
-});
+const ParentIdSchema = z.preprocess((v) => (v === "" ? null : v), z.string().uuid().nullable());
+
+const PostBodySchema = z
+  .object({
+    authorName: z.string().trim().max(40).optional(),
+    content: z.string().trim().min(1).max(5000),
+    contentType: ContentTypeSchema.optional(),
+    parentId: ParentIdSchema.optional(),
+    parent_id: ParentIdSchema.optional(),
+  })
+  .transform((v) => ({
+    authorName: v.authorName,
+    content: v.content,
+    contentType: v.contentType,
+    parentId: v.parentId ?? v.parent_id ?? null,
+  }));
 
 function intParam(url: URL, name: string, fallback: number): number {
   const raw = url.searchParams.get(name);
@@ -22,159 +33,155 @@ function intParam(url: URL, name: string, fallback: number): number {
 type EntryRow = {
   id: string;
   created_at: string;
-  author_key: string;
+  parent_id: string | null;
   author_name: string | null;
+  author_user_id: string | null;
+  author_key: string;
   content: string;
   content_type: string;
-  parent_id: string | null;
   deleted_at: string | null;
 };
 
-type ReactionRow = { entry_id: string; user_key: string; value: number };
-type ParentRow = { id: string; parent_id: string | null; deleted_at: string | null };
-
-export async function GET(req: Request) {
-  try {
-    const visitorKey = parseVisitorKey(req);
-    const url = new URL(req.url);
-    const parentId = url.searchParams.get("parentId");
-    const limit = intParam(url, "limit", 20);
-    const search = url.searchParams.get("search")?.trim();
-    const withCounts = url.searchParams.get("withCounts") === "1";
-    const status = (url.searchParams.get("status") ?? "active").toLowerCase();
-
-    const supabase = createSupabaseServerClient();
-
-    let q = supabase
-      .from("guestbook_entries")
-      .select(
-        "id, created_at, author_key, author_name, content, content_type, parent_id, deleted_at"
-      )
-      .limit(limit);
-
-    if (parentId) {
-      q = q.eq("parent_id", parentId).order("created_at", { ascending: true });
-    } else {
-      q = q.is("parent_id", null).order("created_at", { ascending: false });
-    }
-    // status: active | deleted | all（默认 active）
-    if (status === "active") q = q.is("deleted_at", null);
-    else if (status === "deleted") q = q.not("deleted_at", "is", null);
-    // status === "all" 不加过滤
-
-    if (search) {
-      if (status === "deleted") {
-        q = q.or(`author_name.ilike.%${search}%`);
-      } else {
-        q = q.or(`content.ilike.%${search}%,author_name.ilike.%${search}%`);
-      }
-    }
-
-    const { data: rows, error } = await q;
-    if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
-    }
-
-    const entries = (rows ?? []) as EntryRow[];
-    const ids = entries.map((e) => e.id);
-
-    const reactionByEntry: Record<string, { like: number; dislike: number; my: 1 | -1 | 0 }> =
-      Object.fromEntries(ids.map((id) => [id, { like: 0, dislike: 0, my: 0 }]));
-
-    if (ids.length > 0) {
-      const { data: rs, error: rErr } = await supabase
-        .from("guestbook_reactions")
-        .select("entry_id, user_key, value")
-        .in("entry_id", ids);
-
-      if (rErr) {
-        return NextResponse.json({ success: false, error: rErr.message }, { status: 500 });
-      }
-
-      for (const r of (rs ?? []) as ReactionRow[]) {
-        const bucket = reactionByEntry[r.entry_id];
-        if (!bucket) continue;
-        if (r.value === 1) bucket.like += 1;
-        if (r.value === -1) bucket.dislike += 1;
-        if (visitorKey && r.user_key === visitorKey && (r.value === 1 || r.value === -1)) {
-          bucket.my = r.value as 1 | -1;
-        }
-      }
-    }
-
-    const commentCountByEntry: Record<string, number> = Object.fromEntries(
-      ids.map((id) => [id, 0])
-    );
-
-    if (!parentId && ids.length > 0 && status !== "deleted") {
-      const { data: cs, error: cErr } = await supabase
-        .from("guestbook_entries")
-        .select("parent_id")
-        .in("parent_id", ids)
-        .is("deleted_at", null);
-
-      if (cErr) {
-        return NextResponse.json({ success: false, error: cErr.message }, { status: 500 });
-      }
-
-      for (const c of (cs ?? []) as { parent_id: string | null }[]) {
-        if (!c.parent_id) continue;
-        commentCountByEntry[c.parent_id] = (commentCountByEntry[c.parent_id] ?? 0) + 1;
-      }
-    }
-
-    let counts: { active: number; deleted: number } | undefined;
-
-if (withCounts) {
-  const base = supabase.from("guestbook_entries");
-
-  const [{ count: activeCount, error: aErr }, { count: deletedCount, error: dErr }] =
-    await Promise.all([
-      base
-        .select("id", { count: "exact", head: true })
-        .is("parent_id", null)
-        .is("deleted_at", null),
-      base
-        .select("id", { count: "exact", head: true })
-        .is("parent_id", null)
-        .not("deleted_at", "is", null),
-    ]);
-
-  if (aErr)
-    return NextResponse.json({ success: false, error: aErr.message }, { status: 500 });
-  if (dErr)
-    return NextResponse.json({ success: false, error: dErr.message }, { status: 500 });
-
-  counts = {
-    active: activeCount ?? 0,
-    deleted: deletedCount ?? 0,
+function toPayload(row: EntryRow, opts: { viewerUserId: string | null; myReaction: -1 | 0 | 1; like: number; dislike: number; commentCount: number }) {
+  const viewer = opts.viewerUserId;
+  return {
+    id: row.id,
+    createdAt: row.created_at,
+    parentId: row.parent_id,
+    authorName: row.author_name,
+    content: row.content,
+    contentType: row.content_type,
+    deleted: Boolean(row.deleted_at),
+    mine: viewer ? row.author_user_id === viewer : false,
+    stats: {
+      like: opts.like,
+      dislike: opts.dislike,
+      myReaction: opts.myReaction,
+      commentCount: opts.commentCount,
+    },
   };
 }
 
-    return NextResponse.json({
-      success: true,
-      counts,
-      data: entries.map((e) => {
-        const stats = reactionByEntry[e.id] ?? { like: 0, dislike: 0, my: 0 };
-        const deleted = Boolean(e.deleted_at);
-        return {
-          id: e.id,
-          createdAt: e.created_at,
-          parentId: e.parent_id,
-          authorName: e.author_name,
-          content: deleted ? "" : e.content,
-          contentType: e.content_type,
-          deleted,
-          mine: Boolean(visitorKey && e.author_key === visitorKey),
-          stats: {
-            like: stats.like,
-            dislike: stats.dislike,
-            myReaction: stats.my,
-            commentCount: parentId ? undefined : (commentCountByEntry[e.id] ?? 0),
-          },
-        };
-      }),
-    });
+export async function GET(req: Request) {
+  try {
+    const url = new URL(req.url);
+
+    const parentIdRaw = url.searchParams.get("parentId");
+    const parentIdParsed = parentIdRaw ? z.string().uuid().safeParse(parentIdRaw) : null;
+    if (parentIdRaw && !parentIdParsed?.success) {
+      return NextResponse.json({ success: false, error: "Invalid parentId (uuid required)" }, { status: 400 });
+    }
+    const parentId = parentIdParsed?.success ? parentIdParsed.data : null;
+
+    const limit = intParam(url, "limit", 20);
+    const search = url.searchParams.get("search")?.trim() || null;
+    const withCounts = url.searchParams.get("withCounts") === "1";
+    const status = (url.searchParams.get("status") ?? "active").toLowerCase();
+
+    // viewer（可为空：允许匿名浏览）
+    const sb = supabaseServer();
+    const { data: u } = await sb.auth.getUser();
+    const viewerUserId = u.user?.id ?? null;
+
+    // 用 service role 做读（省心；不吃 RLS），但 mine/myReaction 依据 viewerUserId 计算
+    const svc = createSupabaseServiceRoleClient();
+
+    // ---- 列表查询：只拉 root（parent_id is null）或指定 parentId ----
+    let q = svc
+      .from("guestbook_entries")
+      .select("id, created_at, parent_id, author_name, author_user_id, author_key, content, content_type, deleted_at")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (parentId) q = q.eq("parent_id", parentId);
+    else q = q.is("parent_id", null);
+
+    if (status === "active") q = q.is("deleted_at", null);
+    if (status === "deleted") q = q.not("deleted_at", "is", null);
+
+    if (search) q = q.ilike("content", `%${search}%`);
+
+    const { data: rows, error } = await q;
+    if (error) return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+
+    const list = (rows ?? []) as EntryRow[];
+    const ids = list.map((r) => r.id);
+
+    // ---- counts（active/deleted） ----
+    let counts: { active?: number; deleted?: number } | undefined = undefined;
+    if (withCounts) {
+      const [activeCnt, deletedCnt] = await Promise.all([
+        svc
+          .from("guestbook_entries")
+          .select("id", { count: "estimated", head: true })
+          .is("parent_id", null)
+          .is("deleted_at", null),
+        svc
+          .from("guestbook_entries")
+          .select("id", { count: "estimated", head: true })
+          .is("parent_id", null)
+          .not("deleted_at", "is", null),
+      ]);
+
+      counts = {
+        active: typeof activeCnt.count === "number" ? activeCnt.count : 0,
+        deleted: typeof deletedCnt.count === "number" ? deletedCnt.count : 0,
+      };
+    }
+
+    // ---- 批量统计：like/dislike/commentCount ----
+    // 说明：为了可用性，这里走“行数计数”方式（ids 不大时足够稳定）
+    const [reactionsRes, commentRes] = ids.length
+      ? await Promise.all([
+          svc
+            .from("guestbook_reactions")
+            .select("entry_id, value")
+            .in("entry_id", ids),
+          svc
+            .from("guestbook_entries")
+            .select("id, parent_id")
+            .in("parent_id", ids)
+            .is("deleted_at", null),
+        ])
+      : [{ data: [], error: null }, { data: [], error: null }];
+
+    if (reactionsRes.error) return NextResponse.json({ success: false, error: reactionsRes.error.message }, { status: 500 });
+    if (commentRes.error) return NextResponse.json({ success: false, error: commentRes.error.message }, { status: 500 });
+
+    const likeMap = new Map<string, number>();
+    const dislikeMap = new Map<string, number>();
+    const myReactionMap = new Map<string, -1 | 0 | 1>();
+    const commentCountMap = new Map<string, number>();
+
+    // reactions
+    for (const r of (reactionsRes.data ?? []) as Array<{ entry_id: string; value: number; visitor_id?: string }>) {
+      if (r.value === 1) likeMap.set(r.entry_id, (likeMap.get(r.entry_id) ?? 0) + 1);
+      if (r.value === -1) dislikeMap.set(r.entry_id, (dislikeMap.get(r.entry_id) ?? 0) + 1);
+
+      // 方案A：visitor_id = auth.uid()::text
+      if (viewerUserId && (r as any).visitor_id === viewerUserId) {
+        if (r.value === 1 || r.value === -1) myReactionMap.set(r.entry_id, r.value as -1 | 0 | 1);
+      }
+    }
+
+    // comment count
+    for (const c of (commentRes.data ?? []) as Array<{ parent_id: string | null }>) {
+      const pid = c.parent_id;
+      if (!pid) continue;
+      commentCountMap.set(pid, (commentCountMap.get(pid) ?? 0) + 1);
+    }
+
+    const data = list.map((row) =>
+      toPayload(row, {
+        viewerUserId,
+        myReaction: viewerUserId ? (myReactionMap.get(row.id) ?? 0) : 0,
+        like: likeMap.get(row.id) ?? 0,
+        dislike: dislikeMap.get(row.id) ?? 0,
+        commentCount: commentCountMap.get(row.id) ?? 0,
+      })
+    );
+
+    return NextResponse.json({ success: true, counts, data });
   } catch (e: unknown) {
     return NextResponse.json(
       { success: false, error: e instanceof Error ? e.message : "Unknown error" },
@@ -185,71 +192,62 @@ if (withCounts) {
 
 export async function POST(req: Request) {
   try {
-    const visitorKey = requireVisitorKey(req);
+    // 必须登录：评论/发帖都需要 user
+    const sb = supabaseServer();
+    const { data: u, error: uErr } = await sb.auth.getUser();
+    const userId = u.user?.id;
+    if (uErr || !userId) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+
     const raw = await req.json().catch(() => null);
     const parsed = PostBodySchema.safeParse(raw);
     if (!parsed.success) {
-      return NextResponse.json(
-        { success: false, error: "Invalid body", issues: parsed.error.issues },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: "Invalid body", issues: parsed.error.issues }, { status: 400 });
     }
 
     const { authorName, content, contentType, parentId } = parsed.data;
-    const supabase = createSupabaseServerClient();
 
+    // 写入用 RLS（entries_insert_own），author_user_id 必须 = auth.uid()
+    // 这里直接用 sb（cookie session client）
     if (parentId) {
-      const { data: parent, error: pErr } = await supabase
+      const { data: parent, error: pErr } = await sb
         .from("guestbook_entries")
-        .select("id, parent_id, deleted_at")
+        .select("id, deleted_at")
         .eq("id", parentId)
         .maybeSingle();
 
-      if (pErr) {
-        return NextResponse.json({ success: false, error: pErr.message }, { status: 500 });
+      if (pErr) return NextResponse.json({ success: false, error: pErr.message }, { status: 500 });
+      if (!parent) return NextResponse.json({ success: false, error: "Parent not found" }, { status: 404 });
+      if ((parent as { deleted_at: string | null }).deleted_at) {
+        return NextResponse.json({ success: false, error: "Cannot comment on deleted entry" }, { status: 400 });
       }
-      if (!parent) {
-        return NextResponse.json({ success: false, error: "Parent not found" }, { status: 404 });
-      }
-      const p = parent as ParentRow;
-      if (p.deleted_at) {
-        return NextResponse.json(
-          { success: false, error: "Cannot comment on deleted entry" },
-          { status: 400 }
-        );
-      }
-      // Removed the one-level comment restriction to allow nested replies
     }
 
-    const { data, error } = await supabase
-  .from("guestbook_entries")
-  .insert({
-    visitor_id: visitorKey,              // ✅ 新增：满足 NOT NULL
-    author_key: visitorKey,              // ✅ 继续保留：兼容你现有查询逻辑（mine 用它）
-    author_name: authorName?.trim() || null,
-    content,
-    content_type: contentType ?? "plain",
-    parent_id: parentId ?? null,
-  })
-  .select("id")
-  .single();
+    const { data, error } = await sb
+      .from("guestbook_entries")
+      .insert({
+        author_user_id: userId,
+        // 兼容字段（可保留）
+        author_key: userId,
+        author_name: authorName?.trim() || null,
+        content,
+        content_type: contentType ?? "plain",
+        parent_id: parentId ?? null,
+      })
+      .select("id")
+      .single();
 
-    if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
-    }
+    if (error) return NextResponse.json({ success: false, error: error.message }, { status: 500 });
 
     const id = (data as { id?: unknown } | null)?.id;
     if (typeof id !== "string") {
-      return NextResponse.json(
-        { success: false, error: "Failed to create entry" },
-        { status: 500 }
-      );
+      return NextResponse.json({ success: false, error: "Failed to create entry" }, { status: 500 });
     }
 
     return NextResponse.json({ success: true, id });
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "Unknown error";
-    const status = msg.includes("x-visitor-id") ? 401 : 500;
-    return NextResponse.json({ success: false, error: msg }, { status });
+    return NextResponse.json(
+      { success: false, error: e instanceof Error ? e.message : "Unknown error" },
+      { status: 500 }
+    );
   }
 }

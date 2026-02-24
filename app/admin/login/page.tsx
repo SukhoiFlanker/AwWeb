@@ -1,12 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export default function AdminLoginPage() {
   const router = useRouter();
-  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
@@ -16,7 +16,11 @@ export default function AdminLoginPage() {
     e.preventDefault();
     setNotice(null);
     setLoading(true);
+
     try {
+      // 🔴 只在这里创建 supabase client
+      const supabase = createSupabaseBrowserClient();
+
       const { error } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
@@ -27,7 +31,10 @@ export default function AdminLoginPage() {
         return;
       }
 
-      router.replace("/admin");
+      // 登录成功
+      router.replace("/admin/posts");
+    } catch (err: unknown) {
+      setNotice(err instanceof Error ? err.message : "登录失败");
     } finally {
       setLoading(false);
     }
@@ -36,13 +43,18 @@ export default function AdminLoginPage() {
   return (
     <main style={{ padding: 24, maxWidth: 520 }}>
       <h1>Admin Login</h1>
-      <form onSubmit={onSubmit} style={{ display: "grid", gap: 12, marginTop: 16 }}>
+
+      <form
+        onSubmit={onSubmit}
+        style={{ display: "grid", gap: 12, marginTop: 16 }}
+      >
         <input
           placeholder="管理员邮箱"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           autoComplete="email"
         />
+
         <input
           placeholder="密码"
           type="password"
@@ -50,11 +62,13 @@ export default function AdminLoginPage() {
           onChange={(e) => setPassword(e.target.value)}
           autoComplete="current-password"
         />
+
         <button disabled={loading} type="submit">
           {loading ? "登录中..." : "登录"}
         </button>
       </form>
-      {notice && <p style={{ marginTop: 12 }}>{notice}</p>}
+
+      {notice && <p style={{ marginTop: 12, color: "red" }}>{notice}</p>}
     </main>
   );
 }

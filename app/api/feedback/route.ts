@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServiceRoleClient, supabaseServer } from "@/lib/supabase/server";
+import { z } from "zod";
 
-type FeedbackBody = {
-  name?: string;
-  email?: string;
-  message?: string;
-  pagePath?: string;
-};
+const FeedbackBodySchema = z.object({
+  name: z.string().trim().optional(),
+  email: z.string().trim().optional(),
+  message: z.string().trim().min(1),
+  pagePath: z.string().trim().optional(),
+});
 
 function pickClientIp(req: Request): string | null {
   const xff = req.headers.get("x-forwarded-for");
@@ -16,35 +17,34 @@ function pickClientIp(req: Request): string | null {
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => null)) as FeedbackBody | null;
-    if (!body) {
+    const raw: unknown = await req.json().catch(() => null);
+    const parsedBody = FeedbackBodySchema.safeParse(raw);
+    if (!parsedBody.success) {
       return NextResponse.json(
-        { success: false, error: "Invalid JSON body" },
+        { success: false, error: "Invalid JSON body", issues: parsedBody.error.issues },
         { status: 400 }
       );
     }
+    const body = parsedBody.data;
 
-    const message = typeof body.message === "string" ? body.message.trim() : "";
-    const name = typeof body.name === "string" ? body.name.trim() : null;
-    const email = typeof body.email === "string" ? body.email.trim() : null;
-    const page_path =
-      typeof body.pagePath === "string" ? body.pagePath.trim() : null;
-
-    if (!message) {
-      return NextResponse.json(
-        { success: false, error: "message is required" },
-        { status: 400 }
-      );
-    }
+    const message = body.message;
+    const name = body.name ?? null;
+    const email = body.email ?? null;
+    const page_path = body.pagePath ?? null;
 
     const user_agent = req.headers.get("user-agent");
     const ip = pickClientIp(req);
 
-    const supabase = createSupabaseServerClient();
+    // 1) 用 SSR client 读登录态（cookie session）
+    const sb = supabaseServer();
+    const { data: u } = await sb.auth.getUser();
+    const auth_email = u.user?.email ?? null;
 
-    const { error } = await supabase.from("feedback").insert({
-      name,
-      email,
+    // 2) 用 service role client 写库（保证 .from 一定存在 + 绕过 RLS）
+    const svc = createSupabaseServiceRoleClient();
+    const { error } = await svc.from("feedback").insert({
+      name: name ?? (auth_email ? auth_email.split("@")[0] : null),
+      email: email ?? auth_email,
       message,
       page_path,
       user_agent,
@@ -52,17 +52,12 @@ export async function POST(req: Request) {
     });
 
     if (error) {
-      return NextResponse.json(
-        { success: false, error: error.message },
-        { status: 500 }
-      );
+      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
     }
 
     return NextResponse.json({ success: true });
-  } catch (e: any) {
-    return NextResponse.json(
-      { success: false, error: e?.message ?? "Unknown error" },
-      { status: 500 }
-    );
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Unknown error";
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }

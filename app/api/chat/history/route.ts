@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+import { z } from "zod";
+
+const UuidSchema = z.string().uuid();
 
 export async function GET(req: Request) {
   try {
@@ -13,12 +16,20 @@ export async function GET(req: Request) {
       );
     }
 
-    const supabase = createSupabaseServerClient();
+    const parsed = UuidSchema.safeParse(sessionId);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { success: false, error: "Invalid sessionId (uuid required)" },
+        { status: 400 }
+      );
+    }
+
+    const supabase = createSupabaseServiceRoleClient();
 
     const { data, error } = await supabase
       .from("chat_messages")
       .select("role, content, created_at")
-      .eq("session_id", sessionId)
+      .eq("session_id", parsed.data)
       .order("created_at", { ascending: true });
 
     if (error) {
@@ -26,7 +37,8 @@ export async function GET(req: Request) {
     }
 
     return NextResponse.json({ success: true, history: data ?? [] });
-  } catch (e: any) {
-    return NextResponse.json({ success: false, error: e?.message ?? "Unknown error" }, { status: 500 });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Unknown error";
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }

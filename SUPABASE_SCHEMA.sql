@@ -75,6 +75,104 @@ alter table public.chat_messages enable row level security;
 
 commit;
 
+-- 5) Admin post tombstones（后台软删除：聚合 Posts 用）
+-- 说明：
+-- - 不改动 feedback/chat_messages 原表结构。
+-- - 仅 service role 通过 Next.js Route Handler 读写；开启 RLS 且不附带策略。
+
+begin;
+
+create table if not exists public.admin_post_tombstones (
+  source text not null check (source in ('feedback', 'chat')),
+  source_ref_id uuid not null,
+  deleted_at timestamptz not null default now(),
+  deleted_by uuid null,
+  primary key (source, source_ref_id)
+);
+
+create index if not exists admin_post_tombstones_deleted_at_idx
+  on public.admin_post_tombstones (deleted_at desc);
+
+alter table public.admin_post_tombstones enable row level security;
+
+-- --------------------------
+-- admin_posts / admin_post_user_groups（聚合视图，仅供后台 API 使用）
+-- --------------------------
+-- 注意：底层表均开启 RLS 且无策略；非 service role 无法读取。
+
+create or replace view public.admin_posts as
+select
+  ('feedback'::text || ':' || f.id::text) as id,
+  'feedback'::text as source,
+  f.id as source_ref_id,
+  f.created_at,
+  u.id as author_user_id,
+  coalesce(f.name, u.raw_user_meta_data->>'name', u.raw_user_meta_data->>'full_name') as author_name,
+  coalesce(f.email, u.email) as author_email,
+  f.message as content,
+  null::uuid as parent_id,
+  (t.source_ref_id is not null) as deleted,
+  t.deleted_at as deleted_at,
+  case
+    when u.id is not null then u.id::text
+    when f.email is not null then ('email:' || lower(f.email))
+    when f.name is not null then ('name:' || f.name)
+    else 'anonymous'
+  end as group_key
+from public.feedback f
+left join auth.users u on (f.email is not null and lower(u.email) = lower(f.email))
+left join public.admin_post_tombstones t
+  on t.source = 'feedback' and t.source_ref_id = f.id
+
+union all
+
+select
+  ('chat'::text || ':' || m.id::text) as id,
+  'chat'::text as source,
+  m.id as source_ref_id,
+  m.created_at,
+  s.user_id as author_user_id,
+  coalesce(u.raw_user_meta_data->>'name', u.raw_user_meta_data->>'full_name') as author_name,
+  u.email as author_email,
+  m.content as content,
+  null::uuid as parent_id,
+  (t.source_ref_id is not null) as deleted,
+  t.deleted_at as deleted_at,
+  case
+    when s.user_id is not null then s.user_id::text
+    when u.email is not null then ('email:' || lower(u.email))
+    when coalesce(u.raw_user_meta_data->>'name', u.raw_user_meta_data->>'full_name') is not null
+      then ('name:' || coalesce(u.raw_user_meta_data->>'name', u.raw_user_meta_data->>'full_name'))
+    else 'anonymous'
+  end as group_key
+from public.chat_messages m
+join public.chat_sessions s on s.id = m.session_id
+left join auth.users u on u.id = s.user_id
+left join public.admin_post_tombstones t
+  on t.source = 'chat' and t.source_ref_id = m.id
+where m.role = 'user';
+
+create or replace view public.admin_post_user_groups as
+select
+  group_key,
+  (min(author_user_id::text))::uuid as author_user_id,
+  max(author_name) as author_name,
+  max(author_email) as author_email,
+  sum(case when deleted then 0 else 1 end)::int as active_count,
+  sum(case when deleted then 1 else 0 end)::int as deleted_count
+from public.admin_posts
+group by group_key;
+
+create or replace view public.admin_chat_session_counts as
+select
+  s.user_id::text as user_id,
+  count(*)::int as session_count
+from public.chat_sessions s
+where s.user_id is not null
+group by s.user_id;
+
+commit;
+
 -- 4) Guestbook (互动留言板)
 -- 说明：
 -- - 该模块用于 /feedback 页面（点赞/点踩/评论/删除）。
@@ -213,5 +311,88 @@ drop trigger if exists trg_guestbook_reactions_sync_visitor_id on public.guestbo
 create trigger trg_guestbook_reactions_sync_visitor_id
 before insert or update on public.guestbook_reactions
 for each row execute function public.guestbook_reactions_sync_visitor_id();
+
+commit;
+
+begin;
+
+-- 1) tombstones 表（软删除）
+create table if not exists public.admin_post_tombstones (
+  source text not null check (source in ('feedback', 'chat')),
+  source_ref_id uuid not null,
+  deleted_at timestamptz not null default now(),
+  deleted_by uuid null,
+  primary key (source, source_ref_id)
+);
+
+create index if not exists admin_post_tombstones_deleted_at_idx
+  on public.admin_post_tombstones (deleted_at desc);
+
+alter table public.admin_post_tombstones enable row level security;
+
+-- 2) admin_posts 聚合视图（先删后建，避免旧定义残留）
+drop view if exists public.admin_post_user_groups;
+drop view if exists public.admin_posts;
+
+create view public.admin_posts as
+select
+  ('feedback'::text || ':' || f.id::text) as id,
+  'feedback'::text as source,
+  f.id as source_ref_id,
+  f.created_at,
+  null::uuid as author_user_id,
+  f.name as author_name,
+  f.email as author_email,
+  f.message as content,
+  null::uuid as parent_id,
+  (t.source_ref_id is not null) as deleted,
+  t.deleted_at as deleted_at,
+  case
+    when f.email is not null then ('email:' || lower(f.email))
+    when f.name is not null then ('name:' || f.name)
+    else 'anonymous'
+  end as group_key
+from public.feedback f
+left join public.admin_post_tombstones t
+  on t.source = 'feedback' and t.source_ref_id = f.id
+
+union all
+
+select
+  ('chat'::text || ':' || m.id::text) as id,
+  'chat'::text as source,
+  m.id as source_ref_id,
+  m.created_at,
+  s.user_id as author_user_id,
+  coalesce(u.raw_user_meta_data->>'name', u.raw_user_meta_data->>'full_name') as author_name,
+  u.email as author_email,
+  m.content as content,
+  null::uuid as parent_id,
+  (t.source_ref_id is not null) as deleted,
+  t.deleted_at as deleted_at,
+  case
+    when s.user_id is not null then s.user_id::text
+    when u.email is not null then ('email:' || lower(u.email))
+    when coalesce(u.raw_user_meta_data->>'name', u.raw_user_meta_data->>'full_name') is not null
+      then ('name:' || coalesce(u.raw_user_meta_data->>'name', u.raw_user_meta_data->>'full_name'))
+    else 'anonymous'
+  end as group_key
+from public.chat_messages m
+join public.chat_sessions s on s.id = m.session_id
+left join auth.users u on u.id = s.user_id
+left join public.admin_post_tombstones t
+  on t.source = 'chat' and t.source_ref_id = m.id;
+
+-- 3) 用户分组视图（uuid 不能 max，所以用 text 聚合再 cast 回 uuid）
+create or replace view public.admin_post_user_groups as
+select
+  group_key,
+  (min(author_user_id::text))::uuid as author_user_id,
+  max(author_name) as author_name,
+  max(author_email) as author_email,
+  sum(case when deleted then 0 else 1 end)::int as active_count,
+  sum(case when deleted then 1 else 0 end)::int as deleted_count
+from public.admin_posts
+group by group_key;
 
 commit;
