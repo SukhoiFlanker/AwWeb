@@ -1,11 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { useEffect, useState } from "react";
 
 export default function Home() {
-  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [me, setMe] = useState<{ isAuthed: boolean; isAdmin: boolean; email: string | null }>({
     isAuthed: false,
     isAdmin: false,
@@ -15,34 +13,16 @@ export default function Home() {
   useEffect(() => {
     async function refreshMe() {
       try {
-        const { data: sess } = await supabase.auth.getSession();
-        const token = sess.session?.access_token;
-
-        if (!token) {
-          setMe({ isAuthed: false, isAdmin: false, email: null });
-          return;
-        }
-
-        const r = await fetch("/api/me", { headers: { Authorization: `Bearer ${token}` } });
+        const r = await fetch("/api/me", { cache: "no-store", credentials: "include" });
         const j = await r.json();
-        setMe({
-          isAuthed: !!j.isAuthed,
-          isAdmin: !!j.isAdmin,
-          email: j.email ?? null,
-        });
+        setMe({ isAuthed: !!j.isAuthed, isAdmin: !!j.isAdmin, email: j.email ?? null });
       } catch {
         setMe({ isAuthed: false, isAdmin: false, email: null });
       }
     }
 
     refreshMe();
-
-    const { data: listener } = supabase.auth.onAuthStateChange(async () => {
-      await refreshMe();
-    });
-
-    return () => listener.subscription.unsubscribe();
-  }, [supabase]);
+  }, []);
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900 dark:bg-black dark:text-zinc-50">

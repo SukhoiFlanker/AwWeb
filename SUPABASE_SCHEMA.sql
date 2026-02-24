@@ -314,6 +314,41 @@ for each row execute function public.guestbook_reactions_sync_visitor_id();
 
 commit;
 
+-- 6) User profiles & email verification (注册流程)
+-- 说明：
+-- - user_profiles 保存用户名（唯一）并关联 auth.users
+-- - email_verifications 保存邮箱验证码（仅 service role 读写）
+
+begin;
+
+create table if not exists public.user_profiles (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  username text not null,
+  username_lower text not null,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists user_profiles_username_lower_idx
+  on public.user_profiles (username_lower);
+
+alter table public.user_profiles enable row level security;
+
+create table if not exists public.email_verifications (
+  email text primary key,
+  code_hash text not null,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  attempts int not null default 0,
+  last_sent_at timestamptz not null default now()
+);
+
+create index if not exists email_verifications_expires_at_idx
+  on public.email_verifications (expires_at);
+
+alter table public.email_verifications enable row level security;
+
+commit;
+
 begin;
 
 -- 1) tombstones 表（软删除）

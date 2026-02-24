@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const res = NextResponse.next();
 
   // 只保护 /admin
@@ -17,10 +17,14 @@ export async function middleware(req: NextRequest) {
         return req.cookies.getAll();
       },
       setAll(cookiesToSet) {
-        cookiesToSet.forEach(({ name, value, options }) => {
-          res.cookies.set(name, value, options);
-        });
-      },
+  cookiesToSet.forEach(({ name, value, options }) => {
+    res.cookies.set(name, value, {
+      ...options,
+      secure: process.env.NODE_ENV === "production" ? options.secure : false,
+      sameSite: process.env.NODE_ENV === "production" ? options.sameSite : "lax",
+    });
+  });
+},
     },
   });
 

@@ -1,57 +1,56 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
+
+type Me = { isAuthed: boolean; isAdmin: boolean; email: string | null };
 
 export default function Navbar() {
-  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
-  const [user, setUser] = useState<any>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [me, setMe] = useState<Me>({ isAuthed: false, isAdmin: false, email: null });
+  const pathname = usePathname();
 
-  async function refreshAdminFlag() {
-    const { data: sess } = await supabase.auth.getSession();
-    const token = sess.session?.access_token;
-
-    if (!token) {
-      setIsAdmin(false);
-      return;
+  async function refreshMe() {
+    try {
+      const r = await fetch("/api/me", { cache: "no-store", credentials: "include" });
+      const j = await r.json();
+      if (!r.ok) {
+        setMe({ isAuthed: false, isAdmin: false, email: null });
+        return;
+      }
+      setMe({ isAuthed: !!j.isAuthed, isAdmin: !!j.isAdmin, email: j.email ?? null });
+    } catch {
+      setMe({ isAuthed: false, isAdmin: false, email: null });
     }
-
-    const r = await fetch("/api/me", {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
-    const j = await r.json();
-    setIsAdmin(!!j.isAdmin);
   }
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setUser(data.user ?? null));
-    refreshAdminFlag();
+    refreshMe();
+  }, [pathname]);
 
-    const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      setUser(session?.user ?? null);
-      await refreshAdminFlag();
-    });
-
-    return () => listener.subscription.unsubscribe();
-  }, [supabase]);
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    setMe({ isAuthed: false, isAdmin: false, email: null });
+    window.location.href = "/";
+  }
 
   return (
     <nav style={{ display: "flex", justifyContent: "space-between", padding: "12px 24px", borderBottom: "1px solid #eee" }}>
       <div><Link href="/">Awliver</Link></div>
 
-      <div style={{ display: "flex", gap: 16 }}>
+      <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
         <Link href="/feedback">留言</Link>
         <Link href="/chat">AI聊天</Link>
 
-        {!user ? (
+        {!me.isAuthed ? (
           <Link href="/login">登录</Link>
         ) : (
           <>
             <Link href="/me">我的账号</Link>
-            {isAdmin && <Link href="/admin/posts">管理后台</Link>}
+            {me.isAdmin && <Link href="/admin/posts">管理后台</Link>}
+            <button type="button" onClick={logout} style={{ padding: "6px 10px", border: "1px solid #ddd" }}>
+              退出
+            </button>
           </>
         )}
       </div>
