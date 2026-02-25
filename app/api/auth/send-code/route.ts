@@ -44,6 +44,23 @@ async function sendEmailWithResend(to: string, code: string) {
   return { ok: true as const };
 }
 
+async function findUserByEmail(admin: ReturnType<typeof createSupabaseServiceRoleClient>, email: string) {
+  const perPage = 200;
+  let page = 1;
+
+  while (true) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage });
+    if (error) throw error;
+
+    const users = data?.users ?? [];
+    const hit = users.find((u) => (u.email ?? "").toLowerCase() === email);
+    if (hit) return hit;
+
+    if (users.length < perPage) return null;
+    page += 1;
+  }
+}
+
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({ email: "" }));
   const emailRaw = typeof body.email === "string" ? body.email : "";
@@ -55,8 +72,8 @@ export async function POST(req: Request) {
 
   const admin = createSupabaseServiceRoleClient();
 
-  const { data: existingUser } = await admin.auth.admin.getUserByEmail(email);
-  if (existingUser?.user) {
+  const existingUser = await findUserByEmail(admin, email);
+  if (existingUser) {
     return NextResponse.json({ ok: false, error: "该邮箱已注册" }, { status: 409 });
   }
 
