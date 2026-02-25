@@ -90,7 +90,6 @@ export default function AdminPostsPage() {
   const [panel, setPanel] = useState<"posts" | "chats">("posts");
 
   // posts
-  const [deletedTab, setDeletedTab] = useState<0 | 1>(0);
   const [q, setQ] = useState("");
   const [postPage, setPostPage] = useState(1);
   const postPageSize = 30;
@@ -108,7 +107,7 @@ export default function AdminPostsPage() {
 
   useEffect(() => {
     setPostPage(1);
-  }, [deletedTab, q, selectedUserId]);
+  }, [q, selectedUserId]);
 
   useEffect(() => {
     setChatPage(1);
@@ -164,7 +163,6 @@ export default function AdminPostsPage() {
     setErrorMsg(null);
     setLoading(true);
     const params = new URLSearchParams();
-    params.set("deleted", String(deletedTab));
     params.set("page", String(postPage));
     params.set("pageSize", String(postPageSize));
     params.set("user", userId);
@@ -283,7 +281,7 @@ export default function AdminPostsPage() {
     if (panel === "posts") loadPosts(token, selectedUserId);
     if (panel === "chats") loadSessions(token, selectedUserId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, selectedUserId, panel, deletedTab, q, postPage, chatPage]);
+  }, [token, selectedUserId, panel, q, postPage, chatPage]);
 
   useEffect(() => {
     if (!token || !selectedSessionId) return;
@@ -363,7 +361,7 @@ export default function AdminPostsPage() {
                     {formatUser(u)}
                   </span>
                   <span style={{ fontSize: 12, opacity: 0.85 }}>
-                    发言 {u.posts.active}/{u.posts.deleted} · 对话 {u.chat_sessions.count}
+                    发言 {u.posts.active} · 对话 {u.chat_sessions.count}
                   </span>
                 </div>
                 <div style={{ marginTop: 4, fontFamily: "monospace", fontSize: 11, opacity: 0.8 }}>
@@ -426,33 +424,6 @@ export default function AdminPostsPage() {
               {panel === "posts" ? (
                 <div style={{ display: "grid", gap: 12 }}>
                   <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button
-                        onClick={() => setDeletedTab(0)}
-                        style={{
-                          padding: "6px 10px",
-                          border: "1px solid #ddd",
-                          borderRadius: 8,
-                          background: deletedTab === 0 ? "#111" : "#fff",
-                          color: deletedTab === 0 ? "#fff" : "#111",
-                        }}
-                      >
-                        未删除
-                      </button>
-                      <button
-                        onClick={() => setDeletedTab(1)}
-                        style={{
-                          padding: "6px 10px",
-                          border: "1px solid #ddd",
-                          borderRadius: 8,
-                          background: deletedTab === 1 ? "#111" : "#fff",
-                          color: deletedTab === 1 ? "#fff" : "#111",
-                        }}
-                      >
-                        回收站
-                      </button>
-                    </div>
-
                     <input
                       placeholder="搜索发言内容（q）"
                       value={q}
@@ -513,11 +484,7 @@ export default function AdminPostsPage() {
                             </div>
                             <div style={{ display: "flex", gap: 8 }}>
                               <button onClick={() => router.push(`/admin/posts/${encodeURIComponent(p.id)}`)}>查看</button>
-                              {deletedTab === 0 ? (
-                                <button onClick={() => setDeleted(p.id, true)}>软删除</button>
-                              ) : (
-                                <button onClick={() => setDeleted(p.id, false)}>恢复</button>
-                              )}
+                              <button onClick={() => setDeleted(p.id, true)}>删除</button>
                             </div>
                           </div>
                         </li>
@@ -623,4 +590,3 @@ export default function AdminPostsPage() {
     </main>
   );
 }
-

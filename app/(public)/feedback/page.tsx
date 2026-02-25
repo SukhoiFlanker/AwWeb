@@ -8,7 +8,12 @@ type GuestbookEntry = {
   id: string;
   createdAt: string;
   parentId: string | null;
+  rootId?: string | null;
+  depth?: number;
+  replyToUserId?: string | null;
+  replyToName?: string | null;
   authorName: string | null;
+  authorIsAdmin?: boolean;
   content: string;
   contentType: "plain" | "md" | string;
   deleted: boolean;
@@ -79,36 +84,34 @@ function ReactionButton(props: {
     <button
       type="button"
       onClick={props.onClick}
+      aria-pressed={props.active}
       className={[
         "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm transition",
         props.active
-          ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-50 dark:bg-zinc-50 dark:text-black"
+          ? "border-zinc-900 bg-zinc-900 text-white ring-2 ring-zinc-900/30 dark:border-zinc-50 dark:bg-zinc-50 dark:text-black"
           : "border-zinc-200 bg-white hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900",
       ].join(" ")}
     >
       <span>{props.label}</span>
-      <span className="tabular-nums text-zinc-600 dark:text-zinc-400">
-        {props.count}
-      </span>
+      <span className="tabular-nums text-zinc-600 dark:text-zinc-400">{props.count}</span>
+      {props.active && <span className="text-xs text-zinc-200 dark:text-zinc-800">已选</span>}
     </button>
   );
 }
 
 function Editor(props: {
-  initialName?: string;
   placeholder: string;
   submitLabel: string;
   compact?: boolean;
-  onSubmit: (p: { authorName?: string; content: string; contentType: "plain" | "md" }) => Promise<void>;
+  onSubmit: (p: { content: string; contentType: "plain" | "md" }) => Promise<void>;
 }) {
-  const [authorName, setAuthorName] = useState(props.initialName ?? "");
   const [content, setContent] = useState("");
   const [contentType, setContentType] = useState<"plain" | "md">("md");
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(!props.compact);
 
-const textareaId = useId();
+  const textareaId = useId();
 
   function applyMd(action: "bold" | "italic" | "code" | "quote" | "ul" | "link" | "h2" | "codeblock" | "table") {
     if (contentType !== "md") return;
@@ -166,6 +169,23 @@ const textareaId = useId();
     }
   }
 
+  function insertText(text: string) {
+    const el = document.getElementById(textareaId) as HTMLTextAreaElement | null;
+    if (!el) {
+      setContent((v) => v + text);
+      return;
+    }
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? 0;
+    const next = content.slice(0, start) + text + content.slice(end);
+    setContent(next);
+    queueMicrotask(() => {
+      el.focus();
+      const pos = start + text.length;
+      el.setSelectionRange(pos, pos);
+    });
+  }
+
   async function onPickFile(file: File | null) {
     if (!file) return;
     const text = await file.text().catch(() => "");
@@ -181,11 +201,7 @@ const textareaId = useId();
     }
     setLoading(true);
     try {
-      await props.onSubmit({
-        authorName: authorName.trim() || undefined,
-        content: msg,
-        contentType,
-      });
+      await props.onSubmit({ content: msg, contentType });
       setContent("");
       setNotice("已发送");
       setTimeout(() => setNotice(null), 1200);
@@ -199,19 +215,11 @@ const textareaId = useId();
   return (
     <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
       <div className="flex flex-wrap items-center gap-2">
-        <input
-          value={authorName}
-          onChange={(e) => setAuthorName(e.target.value)}
-          placeholder="昵称（可选）"
-          className="w-48 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-400 dark:border-zinc-800 dark:bg-black dark:focus:border-zinc-600"
-        />
         <div className="flex items-center gap-2">
           <label className="text-sm text-zinc-600 dark:text-zinc-400">格式</label>
           <select
             value={contentType}
-            onChange={(e) =>
-              setContentType(e.target.value === "plain" ? "plain" : "md")
-            }
+            onChange={(e) => setContentType(e.target.value === "plain" ? "plain" : "md")}
             className="rounded-lg border border-zinc-200 bg-white px-2 py-2 text-sm outline-none dark:border-zinc-800 dark:bg-black"
           >
             <option value="md">Markdown</option>
@@ -230,6 +238,18 @@ const textareaId = useId();
 
       <div className={["mt-3 grid gap-3", showPreview ? "md:grid-cols-2" : ""].join(" ")}>
         <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2 text-base">
+            {["😀", "😂", "😍", "👍", "🎉", "😢", "😡", "🔥"].map((emo) => (
+              <button
+                key={emo}
+                type="button"
+                onClick={() => insertText(emo)}
+                className="rounded border border-zinc-200 bg-white px-2 py-1 text-sm hover:bg-zinc-50 dark:border-zinc-800 dark:bg-black dark:hover:bg-zinc-900"
+              >
+                {emo}
+              </button>
+            ))}
+          </div>
           {contentType === "md" && (
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -368,16 +388,24 @@ function EntryCard(props: {
   onReact: (entryId: string, value: -1 | 0 | 1) => Promise<void>;
   onDelete: (entryId: string) => Promise<void>;
   onOpen: (entryId: string) => void;
+  showOpen?: boolean;
+  openLabel?: string;
 }) {
   const e = props.entry;
+  const showOpen = props.showOpen !== false;
 
   return (
     <article className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-sm text-zinc-600 dark:text-zinc-400">
-          <span className="font-medium text-zinc-900 dark:text-zinc-50">
-            {e.authorName || "匿名"}
+          <span className={["font-medium", e.authorIsAdmin ? "text-red-600 dark:text-red-400" : "text-zinc-900 dark:text-zinc-50"].join(" ")}>
+            {e.authorName || "用户"}
           </span>
+          {e.authorIsAdmin && (
+            <span className="ml-2 rounded bg-red-50 px-2 py-0.5 text-xs text-red-600 dark:bg-red-950/40 dark:text-red-300">
+              管理员
+            </span>
+          )}
           <span className="mx-2">·</span>
           <span>{formatTime(e.createdAt)}</span>
           {e.deleted && (
@@ -397,39 +425,45 @@ function EntryCard(props: {
               删除
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => props.onOpen(e.id)}
-            className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50 dark:border-zinc-800 dark:bg-black dark:hover:bg-zinc-900"
-          >
-            查看/评论
-          </button>
+          {showOpen && (
+            <button
+              type="button"
+              onClick={() => props.onOpen(e.id)}
+              className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50 dark:border-zinc-800 dark:bg-black dark:hover:bg-zinc-900"
+            >
+              {props.openLabel ?? "查看评论"}
+            </button>
+          )}
         </div>
       </div>
 
       <div className="mt-3">
         {e.deleted ? (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">（内容已删除）</p>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">该评论已删除</p>
         ) : e.contentType === "md" ? (
           <div
             className="text-sm leading-6 text-zinc-900 dark:text-zinc-50"
-            dangerouslySetInnerHTML={{ __html: miniMarkdownToHtml(e.content) }}
+            dangerouslySetInnerHTML={{
+              __html: (e.replyToName ? `<p class="text-xs text-zinc-500 dark:text-zinc-400">回复 @${escapeHtml(e.replyToName)}</p>` : "") + miniMarkdownToHtml(e.content),
+            }}
           />
         ) : (
-          <pre className="whitespace-pre-wrap text-sm leading-6">{e.content}</pre>
+          <pre className="whitespace-pre-wrap text-sm leading-6">
+            {e.replyToName ? `回复 @${e.replyToName}\n` : ""}{e.content}
+          </pre>
         )}
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <ReactionButton
           active={e.stats.myReaction === 1}
-          label="赞"
+          label="👍"
           count={e.stats.like}
           onClick={() => props.onReact(e.id, e.stats.myReaction === 1 ? 0 : 1)}
         />
         <ReactionButton
           active={e.stats.myReaction === -1}
-          label="踩"
+          label="👎"
           count={e.stats.dislike}
           onClick={() => props.onReact(e.id, e.stats.myReaction === -1 ? 0 : -1)}
         />
@@ -441,71 +475,25 @@ function EntryCard(props: {
   );
 }
 
-function CommentTree(props: {
-  entry: GuestbookEntry;
-  onReact: (entryId: string, value: -1 | 0 | 1) => Promise<void>;
-  onDelete: (entryId: string) => Promise<void>;
-  onReply: (
-    parentId: string,
-    p: { authorName?: string; content: string; contentType: "plain" | "md" }
-  ) => Promise<void>;
-  depth?: number;
-}) {
-  const maxDepth = 5;
-  const depth = props.depth || 0;
-  const e = props.entry;
-
-  return (
-    <div className={depth > 0 ? "ml-6 border-l-2 border-zinc-200 pl-4 dark:border-zinc-700" : ""}>
-      <EntryCard entry={e} onReact={props.onReact} onDelete={props.onDelete} onOpen={() => {}} />
-
-      {depth < maxDepth && e.children && e.children.length > 0 && (
-        <div className="mt-3 space-y-3">
-          {e.children.map((child) => (
-            <CommentTree
-              key={child.id}
-              entry={child}
-              onReact={props.onReact}
-              onDelete={props.onDelete}
-              onReply={props.onReply}
-              depth={depth + 1}
-            />
-          ))}
-        </div>
-      )}
-
-      {depth < maxDepth && (
-        <div className="mt-3">
-          <Editor
-            compact
-            placeholder={`回复 ${e.authorName || "匿名"}...`}
-            submitLabel="回复"
-            onSubmit={(p) => props.onReply(e.id, p)}
-            initialName=""
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-
 export default function FeedbackPage() {
-    type ActiveDetail = {
-    entry: GuestbookEntry;
-  };
-  const [counts, setCounts] = useState<{ active: number; deleted: number }>({
-    active: 0,
-    deleted: 0,
-  });
-  const [activeDetail, setActiveDetail] = useState<ActiveDetail | null>(null);
+  const PAGE_SIZE = 10;
+  const REPLY_PAGE_SIZE = 10;
+  const [isAdmin, setIsAdmin] = useState(false);
   const [entries, setEntries] = useState<GuestbookEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [mode, setMode] = useState<"all" | "mine" | "trash">("all");
+  const [mode, setMode] = useState<"all" | "mine">("all");
 
-  const [activeId, setActiveId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [replyMap, setReplyMap] = useState<Record<string, { items: GuestbookEntry[]; page: number; hasMore: boolean; loading: boolean; expanded: boolean }>>({});
+  const [replyBoxOpen, setReplyBoxOpen] = useState<Record<string, boolean>>({});
+  const [announcements, setAnnouncements] = useState<Array<{ id: string; created_at: string; author_name: string | null; author_is_admin: boolean; content: string; content_type: string }>>([]);
+  const [announceSide, setAnnounceSide] = useState<"left" | "right">("right");
+  const [announceCollapsed, setAnnounceCollapsed] = useState(false);
+  const [announceContent, setAnnounceContent] = useState("");
+  const [announceType, setAnnounceType] = useState<"plain" | "md">("md");
 
   function gotoLogin() {
   const next = encodeURIComponent(window.location.pathname + window.location.search);
@@ -523,17 +511,16 @@ async function guardAuthOrThrow(res: Response, data: any) {
   }
 }
 
-  const loadList = useCallback(async () => {
+  const loadList = useCallback(async (nextPage = 1, append = false) => {
     setNotice(null);
     setLoading(true);
      try {
     const params = new URLSearchParams();
 
-    // ✅ 1) 传 status：回收站 => deleted；其它 => active
-    params.set("status", mode === "trash" ? "deleted" : "active");
-
-    // ✅ 2) 请求 counts
-    params.set("withCounts", "1");
+    // ✅ 仅拉 active
+    params.set("status", "active");
+    params.set("limit", String(PAGE_SIZE));
+    params.set("page", String(nextPage));
 
     if (searchQuery.trim()) {
       params.set("search", searchQuery.trim());
@@ -545,15 +532,12 @@ async function guardAuthOrThrow(res: Response, data: any) {
       throw new Error(data?.error || `加载失败（${res.status}）`);
     }
 
-    setEntries((data.data ?? []) as GuestbookEntry[]);
+    const list = (data.data ?? []) as GuestbookEntry[];
+    setEntries((prev) => (append ? [...prev, ...list] : list));
+    setHasMore(list.length === PAGE_SIZE);
+    setPage(nextPage);
 
     // ✅ 3) 保存 counts（后端方案 A 返回的字段）
-    if (data.counts) {
-      setCounts({
-        active: Number(data.counts.active ?? 0),
-        deleted: Number(data.counts.deleted ?? 0),
-      });
-    }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "加载失败";
       if (
@@ -572,51 +556,65 @@ async function guardAuthOrThrow(res: Response, data: any) {
     }
   }, [mode, searchQuery]);
 
-  async function loadDetail(id: string) {
-    setActiveId(id);
-    setActiveDetail(null);
-    try {
-      const res = await guestbookFetch(`/api/guestbook/${id}?includeComments=1`);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data?.success) {
-        throw new Error(data?.error || `加载失败（${res.status}）`);
-      }
+  async function loadReplies(parentId: string, reset = false) {
+    setReplyMap((prev) => ({
+      ...prev,
+      [parentId]: {
+        items: reset ? [] : prev[parentId]?.items ?? [],
+        page: reset ? 1 : (prev[parentId]?.page ?? 1),
+        hasMore: reset ? true : (prev[parentId]?.hasMore ?? true),
+        loading: true,
+        expanded: true,
+      },
+    }));
 
-      // Build comment tree
-      const entry = data.entry as GuestbookEntry;
-      const flatComments = (data.comments ?? []) as GuestbookEntry[];
-      
-      // Group comments by parent
-      const commentMap = new Map<string, GuestbookEntry[]>();
-      for (const comment of flatComments) {
-        const parentId = comment.parentId || entry.id;
-        if (!commentMap.has(parentId)) {
-          commentMap.set(parentId, []);
-        }
-        commentMap.get(parentId)!.push(comment);
-      }
+    const nextPage = reset ? 1 : (replyMap[parentId]?.page ?? 1);
+    const params = new URLSearchParams();
+    params.set("parentId", parentId);
+    params.set("status", "active");
+    params.set("limit", String(REPLY_PAGE_SIZE));
+    params.set("page", String(nextPage));
 
-      // Recursively build tree
-      function buildTree(item: GuestbookEntry): GuestbookEntry {
-        const children = commentMap.get(item.id) || [];
-        return {
-          ...item,
-          children: children.map(buildTree),
-        };
-      }
-
-      const entryWithChildren = buildTree(entry);
-
-      setActiveDetail({
-        entry: entryWithChildren,
-      });
-    } catch (e: unknown) {
-      setNotice(e instanceof Error ? e.message : "加载失败");
-      setActiveId(null);
+    const res = await guestbookFetch(`/api/guestbook?${params.toString()}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.success) {
+      setNotice(data?.error || `加载失败（${res.status}）`);
+      setReplyMap((prev) => ({
+        ...prev,
+        [parentId]: { ...(prev[parentId] ?? { items: [], page: 1, hasMore: false, expanded: true }), loading: false },
+      }));
+      return;
     }
+
+    const list = (data.data ?? []) as GuestbookEntry[];
+    setReplyMap((prev) => {
+      const prevItems = reset ? [] : prev[parentId]?.items ?? [];
+      return {
+        ...prev,
+        [parentId]: {
+          items: [...prevItems, ...list],
+          page: nextPage + 1,
+          hasMore: list.length === REPLY_PAGE_SIZE,
+          loading: false,
+          expanded: true,
+        },
+      };
+    });
   }
 
-  async function postRoot(p: { authorName?: string; content: string; contentType: "plain" | "md" }) {
+  function toggleReplies(parentId: string) {
+    const cur = replyMap[parentId];
+    if (cur?.expanded) {
+      setReplyMap((prev) => ({
+        ...prev,
+        [parentId]: { ...(prev[parentId] ?? { items: [], page: 1, hasMore: false, loading: false }), expanded: false },
+      }));
+      return;
+    }
+    void loadReplies(parentId, cur?.items?.length ? false : true);
+  }
+
+  async function postRoot(p: { content: string; contentType: "plain" | "md" }) {
   const res = await guestbookFetch("/api/guestbook/entry", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -624,13 +622,10 @@ async function guardAuthOrThrow(res: Response, data: any) {
   });
   const data = await res.json().catch(() => ({}));
   await guardAuthOrThrow(res, data);
-  await loadList();
+  await loadList(1, false);
 }
 
-  async function postComment(
-  parentId: string,
-  p: { authorName?: string; content: string; contentType: "plain" | "md" }
-) {
+  async function postComment(parentId: string, p: { content: string; contentType: "plain" | "md" }) {
   const res = await guestbookFetch("/api/guestbook/entry", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -639,8 +634,8 @@ async function guardAuthOrThrow(res: Response, data: any) {
   const data = await res.json().catch(() => ({}));
   await guardAuthOrThrow(res, data);
 
-  if (activeId) await loadDetail(activeId);
-  await loadList();
+  await loadReplies(parentId, true);
+  await loadList(1, false);
 }
 
   async function react(entryId: string, value: -1 | 0 | 1) {
@@ -661,8 +656,7 @@ async function guardAuthOrThrow(res: Response, data: any) {
     return;
   }
 
-  await loadList();
-  if (activeId) await loadDetail(activeId);
+  await loadList(1, false);
 }
 
   async function del(entryId: string) {
@@ -681,28 +675,209 @@ async function guardAuthOrThrow(res: Response, data: any) {
     return;
   }
 
-  await loadList();
-  if (activeId === entryId) {
-    setActiveId(null);
-    setActiveDetail(null);
-  } else if (activeId) {
-    await loadDetail(activeId);
-  }
+  await loadList(1, false);
 }
 
   useEffect(() => {
-    void loadList();
+    setPage(1);
+    setHasMore(true);
+    setReplyMap({});
+    setReplyBoxOpen({});
+    void loadList(1, false);
   }, [loadList]);
 
+  useEffect(() => {
+    (async () => {
+      const res = await fetch("/api/me", { cache: "no-store", credentials: "include" });
+      const data = await res.json().catch(() => ({}));
+      setIsAdmin(Boolean(data?.isAdmin));
+    })();
+  }, []);
+
+  async function loadAnnouncements() {
+    const res = await fetch("/api/feedback/announcements", { cache: "no-store" });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data?.success) setAnnouncements(data.items ?? []);
+  }
+
+  async function postAnnouncement() {
+    if (!announceContent.trim()) return;
+    const res = await fetch("/api/feedback/announcements", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: announceContent, contentType: announceType }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.success) {
+      setNotice(data?.error || "公告发布失败");
+      return;
+    }
+    setAnnounceContent("");
+    await loadAnnouncements();
+  }
+
   const visibleEntries = useMemo(() => {
-    if (mode === "trash") return entries.filter((e) => e.deleted);
     const base = entries.filter((e) => !e.deleted);
     if (mode === "all") return base;
     return base.filter((e) => e.mine);
   }, [entries, mode]);
 
+  function renderReplies(parentId: string, depth: number) {
+    const state = replyMap[parentId];
+    if (!state?.expanded) return null;
+    const items = state.items ?? [];
+
+    return (
+      <div className={depth > 0 ? "ml-6 border-l-2 border-zinc-200 pl-4 dark:border-zinc-700" : "mt-3"}>
+        {items.map((e) => (
+          <div key={e.id} className="mt-3 space-y-2">
+            <EntryCard entry={e} onReact={react} onDelete={del} onOpen={() => {}} showOpen={false} />
+            <div className="flex items-center gap-2">
+              {depth < 2 && (
+                <button
+                  type="button"
+                  onClick={() => toggleReplies(e.id)}
+                  className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs hover:bg-zinc-50 dark:border-zinc-800 dark:bg-black dark:hover:bg-zinc-900"
+                >
+                  {replyMap[e.id]?.expanded ? "收起回复" : `展开回复${e.stats.commentCount ? `(${e.stats.commentCount})` : ""}`}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setReplyBoxOpen((prev) => ({ ...prev, [e.id]: !prev[e.id] }))}
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs hover:bg-zinc-50 dark:border-zinc-800 dark:bg-black dark:hover:bg-zinc-900"
+              >
+                {replyBoxOpen[e.id] ? "取消回复" : "回复"}
+              </button>
+            </div>
+
+            {replyBoxOpen[e.id] && (
+              <Editor
+                compact
+                placeholder={`回复 ${e.authorName || "用户"}...`}
+                submitLabel="回复"
+                onSubmit={(p) => postComment(e.id, p)}
+              />
+            )}
+
+            {depth < 2 && renderReplies(e.id, depth + 1)}
+          </div>
+        ))}
+
+        {state.loading && (
+          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">加载中...</p>
+        )}
+        {!state.loading && state.hasMore && (
+          <button
+            type="button"
+            onClick={() => loadReplies(parentId, false)}
+            className="mt-2 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs hover:bg-zinc-50 dark:border-zinc-800 dark:bg-black dark:hover:bg-zinc-900"
+          >
+            加载更多回复
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  useEffect(() => {
+    void loadAnnouncements();
+  }, []);
+
+  const sidebar = (
+    <aside className="w-full max-w-xs">
+      <div className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="flex items-center justify-between gap-2">
+          <strong>公告</strong>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setAnnounceSide((s) => (s === "left" ? "right" : "left"))}
+              className="rounded border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 dark:border-zinc-800 dark:bg-black dark:hover:bg-zinc-900"
+            >
+              切换方向
+            </button>
+            <button
+              type="button"
+              onClick={() => setAnnounceCollapsed((v) => !v)}
+              className="rounded border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 dark:border-zinc-800 dark:bg-black dark:hover:bg-zinc-900"
+            >
+              {announceCollapsed ? "展开" : "折叠"}
+            </button>
+          </div>
+        </div>
+
+        {!announceCollapsed && (
+          <div className="mt-3 space-y-3">
+            {isAdmin && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-zinc-600 dark:text-zinc-400">格式</label>
+                  <select
+                    value={announceType}
+                    onChange={(e) => setAnnounceType(e.target.value === "plain" ? "plain" : "md")}
+                    className="rounded border border-zinc-200 bg-white px-2 py-1 text-xs dark:border-zinc-800 dark:bg-black"
+                  >
+                    <option value="md">Markdown</option>
+                    <option value="plain">纯文本</option>
+                  </select>
+                </div>
+                <textarea
+                  value={announceContent}
+                  onChange={(e) => setAnnounceContent(e.target.value)}
+                  placeholder="发布公告..."
+                  rows={4}
+                  className="w-full resize-y rounded border border-zinc-200 bg-white px-2 py-1 text-sm dark:border-zinc-800 dark:bg-black"
+                />
+                <button
+                  type="button"
+                  onClick={postAnnouncement}
+                  className="rounded bg-zinc-900 px-3 py-1.5 text-xs text-white hover:bg-zinc-800 dark:bg-zinc-50 dark:text-black dark:hover:bg-zinc-200"
+                >
+                  发布
+                </button>
+              </div>
+            )}
+
+            {announcements.length === 0 ? (
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">暂无公告</p>
+            ) : (
+              <ul className="space-y-3">
+                {announcements.map((a) => (
+                  <li key={a.id} className="rounded border border-zinc-200 bg-zinc-50 p-3 text-sm dark:border-zinc-800 dark:bg-black">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={a.author_is_admin ? "text-red-600 dark:text-red-400" : "text-zinc-700 dark:text-zinc-300"}>
+                        {a.author_name || "管理员"}
+                      </span>
+                      <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                        {a.created_at ? new Date(a.created_at).toLocaleString() : "-"}
+                      </span>
+                    </div>
+                    <div className="mt-2">
+                      {a.content_type === "md" ? (
+                        <div
+                          className="leading-6"
+                          dangerouslySetInnerHTML={{ __html: miniMarkdownToHtml(a.content) }}
+                        />
+                      ) : (
+                        <pre className="whitespace-pre-wrap">{a.content}</pre>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+    </aside>
+  );
+
   return (
-    <main className="mx-auto max-w-3xl px-6 py-16">
+    <main className="mx-auto max-w-6xl px-6 py-16">
+      <div className={["flex gap-6", announceSide === "left" ? "flex-row" : "flex-row-reverse"].join(" ")}>
+        {sidebar}
+        <div className="min-w-0 flex-1">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">留言板</h1>
@@ -712,7 +887,7 @@ async function guardAuthOrThrow(res: Response, data: any) {
         </div>
         <button
           type="button"
-          onClick={loadList}
+          onClick={() => loadList(1, false)}
           className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900"
         >
           {loading ? "刷新中..." : "刷新"}
@@ -745,22 +920,6 @@ async function guardAuthOrThrow(res: Response, data: any) {
           我的  
         </button>
 
-          <button
-  type="button"
-  onClick={() => setMode("trash")}
-  className={[
-    "rounded-full px-4 py-1.5 text-sm",
-    mode === "trash"
-      ? "bg-zinc-900 text-white dark:bg-zinc-50 dark:text-black"
-      : "border border-zinc-200 bg-white hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900",
-  ].join(" ")}
->
-  回收站
-  <span className="ml-2 text-xs text-zinc-500 dark:text-zinc-400">
-    {counts.deleted}
-  </span>
-</button>
-
         <input
           type="text"
           value={searchQuery}
@@ -770,7 +929,7 @@ async function guardAuthOrThrow(res: Response, data: any) {
         />
         <button
           type="button"
-          onClick={loadList}
+          onClick={() => loadList(1, false)}
           className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900"
         >
           {loading ? "搜索中..." : "搜索"}
@@ -795,49 +954,54 @@ async function guardAuthOrThrow(res: Response, data: any) {
             暂无留言
           </div>
         ) : (
-          visibleEntries.map((e) => (
-            <EntryCard
-              key={e.id}
-              entry={e}
-              onReact={react}
-              onDelete={del}
-              onOpen={(id) => void loadDetail(id)}
-            />
-          ))
+          visibleEntries.map((e) => {
+            const isOpen = replyMap[e.id]?.expanded;
+            return (
+              <div key={e.id} className="space-y-3">
+                <EntryCard
+                  entry={e}
+                  onReact={react}
+                  onDelete={del}
+                  onOpen={() => toggleReplies(e.id)}
+                  openLabel={isOpen ? "收起回复" : `展开回复${e.stats.commentCount ? `(${e.stats.commentCount})` : ""}`}
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setReplyBoxOpen((prev) => ({ ...prev, [e.id]: !prev[e.id] }))}
+                    className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs hover:bg-zinc-50 dark:border-zinc-800 dark:bg-black dark:hover:bg-zinc-900"
+                  >
+                    {replyBoxOpen[e.id] ? "取消回复" : "回复"}
+                  </button>
+                </div>
+                {replyBoxOpen[e.id] && (
+                  <Editor
+                    compact
+                    placeholder={`回复 ${e.authorName || "用户"}...`}
+                    submitLabel="回复"
+                    onSubmit={(p) => postComment(e.id, p)}
+                  />
+                )}
+                {renderReplies(e.id, 0)}
+              </div>
+            );
+          })
         )}
       </section>
 
-      {activeId && (
-        <section className="mt-10 rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-lg font-semibold">留言详情</h2>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveId(null);
-                setActiveDetail(null);
-              }}
-              className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50 dark:border-zinc-800 dark:bg-black dark:hover:bg-zinc-900"
-            >
-              关闭
-            </button>
-          </div>
-
-          {!activeDetail ? (
-            <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">加载中...</p>
-          ) : (
-            <div className="mt-4 space-y-4">
-              <CommentTree
-                entry={activeDetail.entry}
-                onReact={react}
-                onDelete={del}
-                onReply={postComment}
-                depth={0}
-              />
-            </div>
-          )}
-        </section>
+      {hasMore && (
+        <div className="mt-6 flex justify-center">
+          <button
+            type="button"
+            onClick={() => loadList(page + 1, true)}
+            className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900"
+          >
+            {loading ? "加载中..." : "加载更多"}
+          </button>
+        </div>
       )}
+        </div>
+      </div>
     </main>
   );
 }

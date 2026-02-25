@@ -168,17 +168,12 @@ export default function AdminPostDetailPage() {
 
             <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
               全局ID：<span style={{ fontFamily: "monospace" }}>{post.id}</span>
-              {post.deleted ? <span style={{ marginLeft: 8, color: "#b00020" }}>（已删除）</span> : null}
             </div>
 
             <pre style={{ marginTop: 12, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{post.content}</pre>
 
             <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-              {post.deleted ? (
-                <button onClick={() => setDeleted(false)}>恢复</button>
-              ) : (
-                <button onClick={() => setDeleted(true)}>软删除</button>
-              )}
+              <button onClick={() => setDeleted(true)}>删除</button>
             </div>
           </div>
 

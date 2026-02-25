@@ -196,12 +196,19 @@ create table if not exists public.guestbook_entries (
   -- 兼容你现有 API 的 mine 判断（GET 用 author_key === visitorKey）
   author_key text not null,
   author_name text null,
+  author_is_admin boolean not null default false,
 
   content text not null,
   content_type text not null default 'plain',
 
   -- 评论：parent_id 指向被评论的留言（根留言为 null）
-  parent_id uuid null references public.guestbook_entries (id) on delete cascade
+  parent_id uuid null references public.guestbook_entries (id) on delete cascade,
+  root_id uuid null,
+  depth int not null default 0,
+  reply_to_user_id uuid null,
+  reply_to_name text null,
+  status text not null default 'active',
+  ip inet null
 );
 
 -- 兼容补齐（防止旧库缺列）
@@ -210,14 +217,24 @@ alter table public.guestbook_entries add column if not exists deleted_at timesta
 alter table public.guestbook_entries add column if not exists visitor_id text;
 alter table public.guestbook_entries add column if not exists author_key text;
 alter table public.guestbook_entries add column if not exists author_name text;
+alter table public.guestbook_entries add column if not exists author_is_admin boolean not null default false;
 alter table public.guestbook_entries add column if not exists content_type text;
 alter table public.guestbook_entries add column if not exists parent_id uuid;
+alter table public.guestbook_entries add column if not exists root_id uuid;
+alter table public.guestbook_entries add column if not exists depth int not null default 0;
+alter table public.guestbook_entries add column if not exists reply_to_user_id uuid;
+alter table public.guestbook_entries add column if not exists reply_to_name text;
+alter table public.guestbook_entries add column if not exists status text not null default 'active';
+alter table public.guestbook_entries add column if not exists ip inet;
 
 create index if not exists guestbook_entries_created_at_idx
   on public.guestbook_entries (created_at desc);
 
 create index if not exists guestbook_entries_parent_id_created_at_idx
   on public.guestbook_entries (parent_id, created_at asc);
+
+create index if not exists guestbook_entries_root_id_created_at_idx
+  on public.guestbook_entries (root_id, created_at asc);
 
 create index if not exists guestbook_entries_author_key_created_at_idx
   on public.guestbook_entries (author_key, created_at desc);
@@ -227,6 +244,9 @@ create index if not exists guestbook_entries_visitor_id_created_at_idx
 
 create index if not exists guestbook_entries_deleted_at_idx
   on public.guestbook_entries (deleted_at);
+
+create index if not exists guestbook_entries_status_idx
+  on public.guestbook_entries (status);
 
 create index if not exists guestbook_entries_updated_at_idx
   on public.guestbook_entries (updated_at desc);
@@ -311,6 +331,27 @@ drop trigger if exists trg_guestbook_reactions_sync_visitor_id on public.guestbo
 create trigger trg_guestbook_reactions_sync_visitor_id
 before insert or update on public.guestbook_reactions
 for each row execute function public.guestbook_reactions_sync_visitor_id();
+
+commit;
+
+-- 7) Feedback announcements（反馈公告）
+begin;
+
+create table if not exists public.feedback_announcements (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  author_user_id uuid references auth.users (id) on delete set null,
+  author_name text,
+  author_is_admin boolean not null default false,
+  content text not null,
+  content_type text not null default 'md'
+);
+
+create index if not exists feedback_announcements_created_at_idx
+  on public.feedback_announcements (created_at desc);
+
+alter table public.feedback_announcements enable row level security;
 
 commit;
 

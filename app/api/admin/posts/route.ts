@@ -108,8 +108,7 @@ export async function GET(req: Request) {
     const userParamRaw = url.searchParams.get("user");
     const userParam = userParamRaw && userParamRaw.trim() ? userParamRaw.trim() : null;
 
-    const deletedParam = url.searchParams.get("deleted");
-    const deleted = deletedParam === "1";
+    const deleted = false;
 
     const page = Math.max(1, parseIntParam(url.searchParams.get("page"), 1));
     const pageSize = Math.min(100, Math.max(1, parseIntParam(url.searchParams.get("pageSize"), 30)));

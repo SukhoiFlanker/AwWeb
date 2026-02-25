@@ -10,14 +10,12 @@ const ParentIdSchema = z.preprocess((v) => (v === "" ? null : v), z.string().uui
 
 const PostBodySchema = z
   .object({
-    authorName: z.string().trim().max(40).optional(),
     content: z.string().trim().min(1).max(5000),
     contentType: ContentTypeSchema.optional(),
     parentId: ParentIdSchema.optional(),
     parent_id: ParentIdSchema.optional(),
   })
   .transform((v) => ({
-    authorName: v.authorName,
     content: v.content,
     contentType: v.contentType,
     parentId: v.parentId ?? v.parent_id ?? null,
@@ -34,7 +32,13 @@ type EntryRow = {
   id: string;
   created_at: string;
   parent_id: string | null;
+  root_id: string | null;
+  depth: number | null;
+  reply_to_user_id: string | null;
+  reply_to_name: string | null;
+  status: string | null;
   author_name: string | null;
+  author_is_admin: boolean | null;
   author_user_id: string | null;
   author_key: string;
   content: string;
@@ -48,10 +52,15 @@ function toPayload(row: EntryRow, opts: { viewerUserId: string | null; myReactio
     id: row.id,
     createdAt: row.created_at,
     parentId: row.parent_id,
+    rootId: row.root_id,
+    depth: row.depth ?? 0,
+    replyToUserId: row.reply_to_user_id,
+    replyToName: row.reply_to_name,
     authorName: row.author_name,
+    authorIsAdmin: Boolean(row.author_is_admin),
     content: row.content,
     contentType: row.content_type,
-    deleted: Boolean(row.deleted_at),
+    deleted: row.status === "deleted" || Boolean(row.deleted_at),
     mine: viewer ? row.author_user_id === viewer : false,
     stats: {
       like: opts.like,
@@ -74,6 +83,7 @@ export async function GET(req: Request) {
     const parentId = parentIdParsed?.success ? parentIdParsed.data : null;
 
     const limit = intParam(url, "limit", 20);
+    const page = intParam(url, "page", 1);
     const search = url.searchParams.get("search")?.trim() || null;
     const withCounts = url.searchParams.get("withCounts") === "1";
     const status = (url.searchParams.get("status") ?? "active").toLowerCase();
@@ -89,17 +99,22 @@ export async function GET(req: Request) {
     // ---- 列表查询：只拉 root（parent_id is null）或指定 parentId ----
     let q = svc
       .from("guestbook_entries")
-      .select("id, created_at, parent_id, author_name, author_user_id, author_key, content, content_type, deleted_at")
-      .order("created_at", { ascending: false })
+      .select("id, created_at, parent_id, root_id, depth, reply_to_user_id, reply_to_name, status, author_name, author_is_admin, author_user_id, author_key, content, content_type, deleted_at")
       .limit(limit);
 
-    if (parentId) q = q.eq("parent_id", parentId);
-    else q = q.is("parent_id", null);
+    if (parentId) {
+      q = q.eq("parent_id", parentId).order("created_at", { ascending: true });
+    } else {
+      q = q.is("parent_id", null).order("created_at", { ascending: false });
+    }
 
-    if (status === "active") q = q.is("deleted_at", null);
-    if (status === "deleted") q = q.not("deleted_at", "is", null);
+    if (status === "active") q = q.eq("status", "active");
+    if (status === "deleted") q = q.eq("status", "deleted");
 
     if (search) q = q.ilike("content", `%${search}%`);
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    q = q.range(from, to);
 
     const { data: rows, error } = await q;
     if (error) return NextResponse.json({ success: false, error: error.message }, { status: 500 });
@@ -115,12 +130,12 @@ export async function GET(req: Request) {
           .from("guestbook_entries")
           .select("id", { count: "estimated", head: true })
           .is("parent_id", null)
-          .is("deleted_at", null),
+          .eq("status", "active"),
         svc
           .from("guestbook_entries")
           .select("id", { count: "estimated", head: true })
           .is("parent_id", null)
-          .not("deleted_at", "is", null),
+          .eq("status", "deleted"),
       ]);
 
       counts = {
@@ -135,13 +150,13 @@ export async function GET(req: Request) {
       ? await Promise.all([
           svc
             .from("guestbook_reactions")
-            .select("entry_id, value")
+            .select("entry_id, value, visitor_id")
             .in("entry_id", ids),
           svc
             .from("guestbook_entries")
             .select("id, parent_id")
             .in("parent_id", ids)
-            .is("deleted_at", null),
+            .eq("status", "active"),
         ])
       : [{ data: [], error: null }, { data: [], error: null }];
 
@@ -171,17 +186,31 @@ export async function GET(req: Request) {
       commentCountMap.set(pid, (commentCountMap.get(pid) ?? 0) + 1);
     }
 
-    const data = list.map((row) =>
-      toPayload(row, {
+    const userIds = Array.from(new Set(list.map((r) => r.author_user_id).filter(Boolean))) as string[];
+    const nameMap = new Map<string, string>();
+    if (userIds.length) {
+      const { data: profiles } = await svc
+        .from("user_profiles")
+        .select("user_id, username")
+        .in("user_id", userIds);
+      for (const p of (profiles ?? []) as Array<{ user_id: string; username: string }>) {
+        if (p.user_id && p.username) nameMap.set(p.user_id, p.username);
+      }
+    }
+
+    const data = list.map((row) => {
+      const payload = toPayload(row, {
         viewerUserId,
         myReaction: viewerUserId ? (myReactionMap.get(row.id) ?? 0) : 0,
         like: likeMap.get(row.id) ?? 0,
         dislike: dislikeMap.get(row.id) ?? 0,
         commentCount: commentCountMap.get(row.id) ?? 0,
-      })
-    );
+      });
+      const latestName = row.author_user_id ? nameMap.get(row.author_user_id) : undefined;
+      return latestName ? { ...payload, authorName: latestName } : payload;
+    });
 
-    return NextResponse.json({ success: true, counts, data });
+    return NextResponse.json({ success: true, counts, page, limit, data });
   } catch (e: unknown) {
     return NextResponse.json(
       { success: false, error: e instanceof Error ? e.message : "Unknown error" },
@@ -204,31 +233,95 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: "Invalid body", issues: parsed.error.issues }, { status: 400 });
     }
 
-    const { authorName, content, contentType, parentId } = parsed.data;
+    const { content, contentType, parentId } = parsed.data;
+    if ((content.match(/https?:\/\/|www\./gi) ?? []).length > 3) {
+      return NextResponse.json({ success: false, error: "链接过多" }, { status: 400 });
+    }
+    const meta = (u.user?.user_metadata ?? {}) as Record<string, unknown>;
+    const metaName =
+      (typeof meta.name === "string" && meta.name.trim()) ||
+      (typeof meta.full_name === "string" && meta.full_name.trim()) ||
+      null;
+    const emailPrefix = (u.user?.email ?? "").split("@")[0] || null;
+    const authorName = metaName || emailPrefix || "用户";
+    const adminEmail = (process.env.ADMIN_EMAIL ?? "").trim().toLowerCase();
+    const isAdmin = !!adminEmail && (u.user?.email ?? "").trim().toLowerCase() === adminEmail;
 
     // 写入用 RLS（entries_insert_own），author_user_id 必须 = auth.uid()
     // 这里直接用 sb（cookie session client）
     if (parentId) {
       const { data: parent, error: pErr } = await sb
         .from("guestbook_entries")
-        .select("id, deleted_at")
+        .select("id, parent_id, root_id, depth, author_user_id, author_name, status, deleted_at")
         .eq("id", parentId)
         .maybeSingle();
 
       if (pErr) return NextResponse.json({ success: false, error: pErr.message }, { status: 500 });
       if (!parent) return NextResponse.json({ success: false, error: "Parent not found" }, { status: 404 });
-      if ((parent as { deleted_at: string | null }).deleted_at) {
+      if ((parent as { deleted_at: string | null }).deleted_at || (parent as any).status === "deleted") {
         return NextResponse.json({ success: false, error: "Cannot comment on deleted entry" }, { status: 400 });
       }
+    }
+
+    const visitorId = req.headers.get("x-visitor-id") || userId;
+    const ip = (req.headers.get("x-forwarded-for") || "").split(",")[0]?.trim() || null;
+
+    const svc = createSupabaseServiceRoleClient();
+    const since = new Date(Date.now() - 60 * 1000).toISOString();
+    const [userRate, ipRate] = await Promise.all([
+      svc
+        .from("guestbook_entries")
+        .select("id", { count: "estimated", head: true })
+        .eq("author_user_id", userId)
+        .gte("created_at", since),
+      ip
+        ? svc
+            .from("guestbook_entries")
+            .select("id", { count: "estimated", head: true })
+            .eq("ip", ip)
+            .gte("created_at", since)
+        : Promise.resolve({ count: 0 }),
+    ]);
+
+    if ((userRate.count ?? 0) >= 5) {
+      return NextResponse.json({ success: false, error: "发送过于频繁，请稍后再试" }, { status: 429 });
+    }
+    if (ip && (ipRate.count ?? 0) >= 5) {
+      return NextResponse.json({ success: false, error: "发送过于频繁，请稍后再试" }, { status: 429 });
+    }
+
+    let rootId: string | null = null;
+    let depth = 0;
+    let replyToUserId: string | null = null;
+    let replyToName: string | null = null;
+
+    if (parentId) {
+      const { data: parent } = await svc
+        .from("guestbook_entries")
+        .select("id, root_id, depth, author_user_id, author_name")
+        .eq("id", parentId)
+        .maybeSingle();
+      rootId = (parent as any)?.root_id ?? (parent as any)?.id ?? null;
+      depth = Math.min(((parent as any)?.depth ?? 0) + 1, 5);
+      replyToUserId = (parent as any)?.author_user_id ?? null;
+      replyToName = (parent as any)?.author_name ?? null;
     }
 
     const { data, error } = await sb
       .from("guestbook_entries")
       .insert({
+        root_id: rootId,
+        depth,
+        reply_to_user_id: replyToUserId,
+        reply_to_name: replyToName,
+        status: "active",
+        ip,
+        visitor_id: visitorId,
         author_user_id: userId,
         // 兼容字段（可保留）
-        author_key: userId,
-        author_name: authorName?.trim() || null,
+        author_key: visitorId,
+        author_name: authorName,
+        author_is_admin: isAdmin,
         content,
         content_type: contentType ?? "plain",
         parent_id: parentId ?? null,
@@ -241,6 +334,9 @@ export async function POST(req: Request) {
     const id = (data as { id?: unknown } | null)?.id;
     if (typeof id !== "string") {
       return NextResponse.json({ success: false, error: "Failed to create entry" }, { status: 500 });
+    }
+    if (!rootId) {
+      await svc.from("guestbook_entries").update({ root_id: id }).eq("id", id);
     }
 
     return NextResponse.json({ success: true, id });

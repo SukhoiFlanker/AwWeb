@@ -17,6 +17,5 @@ export async function guestbookFetch(input: RequestInfo | URL, init?: RequestIni
   const visitorId = getOrCreateVisitorId();
   const headers = new Headers(init?.headers);
   if (visitorId) headers.set("x-visitor-id", visitorId);
-  return fetch(input, { ...init, headers });
+  return fetch(input, { ...init, headers, credentials: "include" });
 }
-
