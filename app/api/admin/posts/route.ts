@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+import { createSupabaseServiceRoleClient, supabaseServer } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -25,16 +25,14 @@ type AdminUserGroup = {
 
 type AdminPostsViewRow = {
   id: string;
-  source: PostSource;
-  source_ref_id: string;
   created_at: string;
+  content: string;
   author_user_id: string | null;
   author_name: string | null;
-  author_email: string | null;
-  content: string;
   parent_id: string | null;
-  deleted: boolean;
-  group_key: string;
+  root_id: string | null;
+  status: string | null;
+  deleted_at: string | null;
 };
 
 function requireEnv(name: string): string {
@@ -54,7 +52,10 @@ function isUuidLike(v: string) {
 
 function parseGlobalId(id: string): { source: PostSource; source_ref_id: string } | null {
   const idx = id.indexOf(":");
-  if (idx <= 0) return null;
+  if (idx <= 0) {
+    if (isUuidLike(id)) return { source: "feedback", source_ref_id: id };
+    return null;
+  }
   const source = id.slice(0, idx) as PostSource;
   const source_ref_id = id.slice(idx + 1);
   if (source !== "feedback" && source !== "chat") return null;
@@ -62,16 +63,22 @@ function parseGlobalId(id: string): { source: PostSource; source_ref_id: string 
   return { source, source_ref_id };
 }
 
-async function requireAdminFromBearer(req: Request) {
+async function requireAdminFromRequest(req: Request) {
   const auth = req.headers.get("authorization") || "";
   const token = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
 
   if (!token) {
-    return {
-      ok: false as const,
-      status: 401 as const,
-      error: "Missing Authorization Bearer token",
-    };
+    const sb = supabaseServer();
+    const { data: userData, error: userErr } = await sb.auth.getUser();
+    if (userErr || !userData?.user) {
+      return { ok: false as const, status: 401 as const, error: "Unauthorized" };
+    }
+    const adminEmail = requireEnv("ADMIN_EMAIL").toLowerCase();
+    const email = (userData.user.email || "").toLowerCase();
+    if (email !== adminEmail) {
+      return { ok: false as const, status: 403 as const, error: "Forbidden (not admin)" };
+    }
+    return { ok: true as const };
   }
 
   const url = requireEnv("SUPABASE_URL");
@@ -97,7 +104,7 @@ async function requireAdminFromBearer(req: Request) {
 
 export async function GET(req: Request) {
   try {
-    const gate = await requireAdminFromBearer(req);
+    const gate = await requireAdminFromRequest(req);
     if (!gate.ok) {
       return NextResponse.json({ success: false, error: gate.error }, { status: gate.status });
     }
@@ -119,34 +126,51 @@ export async function GET(req: Request) {
     const users: AdminUserGroup[] = [];
 
     let qb = adminDb
-      .from("admin_posts")
-      .select(
-        "id, source, source_ref_id, created_at, author_user_id, author_name, author_email, content, parent_id, deleted, group_key",
-        { count: "exact" }
-      )
-      .eq("deleted", deleted)
+      .from("guestbook_entries")
+      .select("id, created_at, author_user_id, author_name, content, parent_id, root_id, status, deleted_at", {
+        count: "exact",
+      })
       .order("created_at", { ascending: false })
-      .order("source_ref_id", { ascending: false })
       .order("id", { ascending: false })
       .range(offset, offset + pageSize - 1);
 
     if (q) qb = qb.ilike("content", `%${q}%`);
-    if (userParam) qb = qb.eq("group_key", userParam === "anonymous" ? "anonymous" : userParam);
+    if (userParam) {
+      if (userParam === "anonymous") qb = qb.is("author_user_id", null);
+      else qb = qb.eq("author_user_id", userParam);
+    }
+    if (!deleted) {
+      qb = qb.neq("status", "deleted").is("deleted_at", null);
+    }
 
     const { data: rows, error: listErr, count } = await qb;
     if (listErr) {
       return NextResponse.json({ success: false, error: listErr.message }, { status: 500 });
     }
 
-    const items: AdminPost[] = (rows || []).map((r: AdminPostsViewRow) => ({
-      id: r.id,
+    const { data: deletedRows } = await adminDb
+      .from("guestbook_entries")
+      .select("id")
+      .or("status.eq.deleted,deleted_at.not.is.null")
+      .limit(5000);
+    const deletedSet = new Set((deletedRows || []).map((r: any) => r.id));
+
+    const filtered = (rows || []).filter((r: AdminPostsViewRow) => {
+      if (deletedSet.has(r.id)) return false;
+      if (r.parent_id && deletedSet.has(r.parent_id)) return false;
+      if (r.root_id && deletedSet.has(r.root_id)) return false;
+      return true;
+    });
+
+    const items: AdminPost[] = filtered.map((r: AdminPostsViewRow) => ({
+      id: `feedback:${r.id}`,
       created_at: r.created_at,
-      author: { user_id: r.author_user_id, name: r.author_name, email: r.author_email },
+      author: { user_id: r.author_user_id, name: r.author_name, email: null },
       content: r.content,
-      source: r.source,
-      source_ref_id: r.source_ref_id,
+      source: "feedback",
+      source_ref_id: r.id,
       parent_id: r.parent_id,
-      deleted: r.deleted,
+      deleted: r.status === "deleted" || Boolean(r.deleted_at),
     }));
 
     return NextResponse.json({
@@ -167,7 +191,7 @@ export async function GET(req: Request) {
 
 export async function PATCH(req: Request) {
   try {
-    const gate = await requireAdminFromBearer(req);
+    const gate = await requireAdminFromRequest(req);
     if (!gate.ok) {
       return NextResponse.json({ success: false, error: gate.error }, { status: gate.status });
     }
@@ -181,6 +205,17 @@ export async function PATCH(req: Request) {
     }
 
     const adminDb = createSupabaseServiceRoleClient();
+
+    if (parsed.source === "feedback") {
+      const { error } = await adminDb
+        .from("guestbook_entries")
+        .update(deleted ? { status: "deleted", deleted_at: new Date().toISOString() } : { status: "active", deleted_at: null })
+        .eq("id", parsed.source_ref_id);
+      if (error) {
+        return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      }
+      return NextResponse.json({ success: true });
+    }
 
     if (deleted) {
       const { error } = await adminDb.from("admin_post_tombstones").upsert(

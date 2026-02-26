@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+import { createSupabaseServiceRoleClient, supabaseServer } from "@/lib/supabase/server";
 import type { AdminPost } from "@/app/api/admin/posts/route";
 
 export const dynamic = "force-dynamic";
@@ -42,7 +42,10 @@ function isUuidLike(v: string) {
 
 function parseGlobalId(id: string): { source: PostSource; source_ref_id: string } | null {
   const idx = id.indexOf(":");
-  if (idx <= 0) return null;
+  if (idx <= 0) {
+    if (isUuidLike(id)) return { source: "feedback", source_ref_id: id };
+    return null;
+  }
   const source = id.slice(0, idx) as PostSource;
   const source_ref_id = id.slice(idx + 1);
   if (source !== "feedback" && source !== "chat") return null;
@@ -50,16 +53,22 @@ function parseGlobalId(id: string): { source: PostSource; source_ref_id: string 
   return { source, source_ref_id };
 }
 
-async function requireAdminFromBearer(req: Request) {
+async function requireAdminFromRequest(req: Request) {
   const auth = req.headers.get("authorization") || "";
   const token = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
 
   if (!token) {
-    return {
-      ok: false as const,
-      status: 401 as const,
-      error: "Missing Authorization Bearer token",
-    };
+    const sb = supabaseServer();
+    const { data: userData, error: userErr } = await sb.auth.getUser();
+    if (userErr || !userData?.user) {
+      return { ok: false as const, status: 401 as const, error: "Unauthorized" };
+    }
+    const adminEmail = requireEnv("ADMIN_EMAIL").toLowerCase();
+    const email = (userData.user.email || "").toLowerCase();
+    if (email !== adminEmail) {
+      return { ok: false as const, status: 403 as const, error: "Forbidden (not admin)" };
+    }
+    return { ok: true as const };
   }
 
   const url = requireEnv("SUPABASE_URL");
@@ -85,7 +94,7 @@ async function requireAdminFromBearer(req: Request) {
 
 export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
-    const gate = await requireAdminFromBearer(req);
+    const gate = await requireAdminFromRequest(req);
     if (!gate.ok) {
       return NextResponse.json({ success: false, error: gate.error }, { status: gate.status });
     }
@@ -109,23 +118,31 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
 
     if (parsed.source === "feedback") {
       const { data, error } = await adminDb
-        .from("feedback")
-        .select("id, created_at, name, email, message, page_path, user_agent, ip")
+        .from("guestbook_entries")
+        .select(
+          "id, created_at, author_user_id, author_name, content, content_type, parent_id, root_id, depth, reply_to_user_id, reply_to_name, status, deleted_at"
+        )
         .eq("id", parsed.source_ref_id)
         .maybeSingle();
 
       if (error) return NextResponse.json({ success: false, error: error.message }, { status: 500 });
       if (!data) return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
 
+      let email: string | null = null;
+      if (data.author_user_id) {
+        const { data: u } = await adminDb.auth.admin.getUserById(data.author_user_id);
+        email = u?.user?.email ?? null;
+      }
+
       const post: AdminPost = {
         id: `feedback:${data.id}`,
         created_at: data.created_at,
-        author: { user_id: null, name: data.name, email: data.email },
-        content: data.message,
+        author: { user_id: data.author_user_id, name: data.author_name, email },
+        content: data.content,
         source: "feedback",
         source_ref_id: data.id,
-        parent_id: null,
-        deleted,
+        parent_id: data.parent_id ?? null,
+        deleted: deleted || data.status === "deleted" || Boolean(data.deleted_at),
       };
 
       return NextResponse.json({ success: true, post, feedback: data });

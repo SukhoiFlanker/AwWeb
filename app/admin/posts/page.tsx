@@ -120,26 +120,31 @@ export default function AdminPostsPage() {
       setLoading(true);
       setErrorMsg(null);
 
-      const { data: sessionData } = await supabase.auth.getSession();
-      const t = sessionData.session?.access_token || null;
-      if (!t) {
+      const meRes = await fetch("/api/me", { cache: "no-store", credentials: "include" });
+      const me = await meRes.json().catch(() => ({}));
+      if (!meRes.ok || !me?.isAdmin) {
         router.replace("/admin/login");
         return;
       }
-      setToken(t);
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const t = sessionData.session?.access_token || null;
+      if (t) setToken(t);
       setLoading(false);
     })();
   }, [router, supabase]);
 
   async function logout() {
     await supabase.auth.signOut();
+    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     router.replace("/admin/login");
   }
 
-  async function loadUsers(t: string) {
+  async function loadUsers(t: string | null) {
     setErrorMsg(null);
+    const headers: Record<string, string> = t ? { Authorization: `Bearer ${t}` } : {};
     const res = await fetch("/api/admin/users", {
-      headers: { Authorization: `Bearer ${t}` },
+      headers,
     });
     const payload: unknown = await res.json().catch(() => ({}));
     if (!res.ok || isApiErr(payload) || !isRecord(payload) || payload.success !== true || !Array.isArray(payload.users)) {
@@ -159,7 +164,7 @@ export default function AdminPostsPage() {
     if (!selectedUserId && data.users.length) setSelectedUserId(data.users[0].id);
   }
 
-  async function loadPosts(t: string, userId: string) {
+  async function loadPosts(t: string | null, userId: string) {
     setErrorMsg(null);
     setLoading(true);
     const params = new URLSearchParams();
@@ -168,8 +173,9 @@ export default function AdminPostsPage() {
     params.set("user", userId);
     if (q.trim()) params.set("q", q.trim());
 
+    const headers: Record<string, string> = t ? { Authorization: `Bearer ${t}` } : {};
     const res = await fetch(`/api/admin/posts?${params.toString()}`, {
-      headers: { Authorization: `Bearer ${t}` },
+      headers,
     });
     const payload: unknown = await res.json().catch(() => ({}));
 
@@ -192,7 +198,7 @@ export default function AdminPostsPage() {
     setLoading(false);
   }
 
-  async function loadSessions(t: string, userId: string) {
+  async function loadSessions(t: string | null, userId: string) {
     setErrorMsg(null);
     setChatLoading(true);
     const params = new URLSearchParams();
@@ -200,8 +206,9 @@ export default function AdminPostsPage() {
     params.set("page", String(chatPage));
     params.set("pageSize", String(chatPageSize));
 
+    const headers: Record<string, string> = t ? { Authorization: `Bearer ${t}` } : {};
     const res = await fetch(`/api/admin/chats?${params.toString()}`, {
-      headers: { Authorization: `Bearer ${t}` },
+      headers,
     });
     const payload: unknown = await res.json().catch(() => ({}));
 
@@ -224,11 +231,12 @@ export default function AdminPostsPage() {
     setChatLoading(false);
   }
 
-  async function loadChatDetail(t: string, sessionId: string) {
+  async function loadChatDetail(t: string | null, sessionId: string) {
     setErrorMsg(null);
     setChatLoading(true);
+    const headers: Record<string, string> = t ? { Authorization: `Bearer ${t}` } : {};
     const res = await fetch(`/api/admin/chats/${encodeURIComponent(sessionId)}`, {
-      headers: { Authorization: `Bearer ${t}` },
+      headers,
     });
     const payload: unknown = await res.json().catch(() => ({}));
 
@@ -250,11 +258,11 @@ export default function AdminPostsPage() {
   }
 
   async function setDeleted(postId: string, deleted: boolean) {
-    if (!token) return;
+    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
     const res = await fetch("/api/admin/posts", {
       method: "PATCH",
       headers: {
-        Authorization: `Bearer ${token}`,
+        ...headers,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ id: postId, deleted }),
@@ -483,7 +491,6 @@ export default function AdminPostsPage() {
                               ID: <span style={{ fontFamily: "monospace" }}>{p.id}</span>
                             </div>
                             <div style={{ display: "flex", gap: 8 }}>
-                              <button onClick={() => router.push(`/admin/posts/${encodeURIComponent(p.id)}`)}>查看</button>
                               <button onClick={() => setDeleted(p.id, true)}>删除</button>
                             </div>
                           </div>

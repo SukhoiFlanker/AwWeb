@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+import { createSupabaseServiceRoleClient, supabaseServer } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -10,12 +10,6 @@ type AdminUser = {
   name: string | null;
   posts: { active: number; deleted: number };
   chat_sessions: { count: number };
-};
-
-type PostGroupRow = {
-  group_key: string;
-  active_count: number;
-  deleted_count: number;
 };
 
 type ChatSessionCountRow = {
@@ -40,12 +34,22 @@ function pickNameFromMeta(meta: unknown): string | null {
   return name || full;
 }
 
-async function requireAdminFromBearer(req: Request) {
+async function requireAdminFromRequest(req: Request) {
   const auth = req.headers.get("authorization") || "";
   const token = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
 
   if (!token) {
-    return { ok: false as const, status: 401 as const, error: "Missing Authorization Bearer token" };
+    const sb = supabaseServer();
+    const { data: userData, error: userErr } = await sb.auth.getUser();
+    if (userErr || !userData?.user) {
+      return { ok: false as const, status: 401 as const, error: "Unauthorized" };
+    }
+    const adminEmail = requireEnv("ADMIN_EMAIL").toLowerCase();
+    const email = (userData.user.email || "").toLowerCase();
+    if (email !== adminEmail) {
+      return { ok: false as const, status: 403 as const, error: "Forbidden (not admin)" };
+    }
+    return { ok: true as const };
   }
 
   const url = requireEnv("SUPABASE_URL");
@@ -67,7 +71,7 @@ async function requireAdminFromBearer(req: Request) {
 
 export async function GET(req: Request) {
   try {
-    const gate = await requireAdminFromBearer(req);
+    const gate = await requireAdminFromRequest(req);
     if (!gate.ok) return NextResponse.json({ success: false, error: gate.error }, { status: gate.status });
 
     const adminDb = createSupabaseServiceRoleClient();
@@ -96,14 +100,6 @@ export async function GET(req: Request) {
       if (page > 50) break; // 防御：最多 50k 用户
     }
 
-    // 发言计数（来自 public view）
-    const { data: postGroups, error: groupErr } = await adminDb
-      .from("admin_post_user_groups")
-      .select("group_key, active_count, deleted_count")
-      .limit(5000);
-
-    if (groupErr) return NextResponse.json({ success: false, error: groupErr.message }, { status: 500 });
-
     // 会话计数（来自 public view）
     const { data: chatCounts, error: chatCountErr } = await adminDb
       .from("admin_chat_session_counts")
@@ -113,11 +109,20 @@ export async function GET(req: Request) {
     if (chatCountErr) return NextResponse.json({ success: false, error: chatCountErr.message }, { status: 500 });
 
     const postCountMap = new Map<string, { active: number; deleted: number }>();
-    for (const r of (postGroups || []) as PostGroupRow[]) {
-      postCountMap.set(r.group_key, {
-        active: typeof r.active_count === "number" ? r.active_count : 0,
-        deleted: typeof r.deleted_count === "number" ? r.deleted_count : 0,
-      });
+    const { data: posts, error: postErr } = await adminDb
+      .from("guestbook_entries")
+      .select("author_user_id, status, deleted_at")
+      .not("author_user_id", "is", null)
+      .limit(10000);
+    if (postErr) return NextResponse.json({ success: false, error: postErr.message }, { status: 500 });
+    for (const r of posts || []) {
+      const uid = (r as any).author_user_id as string | null;
+      if (!uid) continue;
+      const deleted = (r as any).status === "deleted" || Boolean((r as any).deleted_at);
+      const curr = postCountMap.get(uid) || { active: 0, deleted: 0 };
+      if (deleted) curr.deleted += 1;
+      else curr.active += 1;
+      postCountMap.set(uid, curr);
     }
 
     const chatCountMap = new Map<string, number>();

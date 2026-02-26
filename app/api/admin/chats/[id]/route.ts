@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+import { createSupabaseServiceRoleClient, supabaseServer } from "@/lib/supabase/server";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -32,16 +32,22 @@ function requireEnv(name: string): string {
   return v;
 }
 
-async function requireAdminFromBearer(req: Request) {
+async function requireAdminFromRequest(req: Request) {
   const auth = req.headers.get("authorization") || "";
   const token = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
 
   if (!token) {
-    return {
-      ok: false as const,
-      status: 401 as const,
-      error: "Missing Authorization Bearer token",
-    };
+    const sb = supabaseServer();
+    const { data: userData, error: userErr } = await sb.auth.getUser();
+    if (userErr || !userData?.user) {
+      return { ok: false as const, status: 401 as const, error: "Unauthorized" };
+    }
+    const adminEmail = requireEnv("ADMIN_EMAIL").toLowerCase();
+    const email = (userData.user.email || "").toLowerCase();
+    if (email !== adminEmail) {
+      return { ok: false as const, status: 403 as const, error: "Forbidden (not admin)" };
+    }
+    return { ok: true as const };
   }
 
   const url = requireEnv("SUPABASE_URL");
@@ -68,7 +74,7 @@ async function requireAdminFromBearer(req: Request) {
 // ✅ Next.js 16 兼容：context.params 是 Promise
 export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
-    const gate = await requireAdminFromBearer(req);
+    const gate = await requireAdminFromRequest(req);
     if (!gate.ok) {
       return NextResponse.json({ success: false, error: gate.error }, { status: gate.status });
     }

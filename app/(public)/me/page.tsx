@@ -12,6 +12,12 @@ export default function MePage() {
   const [editing, setEditing] = useState(false);
   const [nameInput, setNameInput] = useState("");
   const [adminContact, setAdminContact] = useState<{ email: string | null; contact: string | null } | null>(null);
+  const [myPosts, setMyPosts] = useState<any[]>([]);
+  const [myPostsLoading, setMyPostsLoading] = useState(false);
+  const [myPostsError, setMyPostsError] = useState<string | null>(null);
+  const [notifs, setNotifs] = useState<any[]>([]);
+  const [notifsLoading, setNotifsLoading] = useState(false);
+  const [notifsError, setNotifsError] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -28,8 +34,46 @@ export default function MePage() {
       setName(j.name ?? null);
       setNameInput(j.name ?? "");
       setNotice(null);
+      await Promise.all([loadMyPosts(), loadNotifs()]);
     })();
   }, [router]);
+
+  function formatTime(v?: string) {
+    if (!v) return "-";
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) return v;
+    return d.toLocaleString();
+  }
+
+  async function loadMyPosts() {
+    setMyPostsLoading(true);
+    setMyPostsError(null);
+    const res = await fetch("/api/me/posts", { cache: "no-store", credentials: "include" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.ok) {
+      setMyPostsError(data?.error || `加载失败（${res.status}）`);
+      setMyPosts([]);
+      setMyPostsLoading(false);
+      return;
+    }
+    setMyPosts(Array.isArray(data.items) ? data.items : []);
+    setMyPostsLoading(false);
+  }
+
+  async function loadNotifs() {
+    setNotifsLoading(true);
+    setNotifsError(null);
+    const res = await fetch("/api/me/notifications", { cache: "no-store", credentials: "include" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.ok) {
+      setNotifsError(data?.error || `加载失败（${res.status}）`);
+      setNotifs([]);
+      setNotifsLoading(false);
+      return;
+    }
+    setNotifs(Array.isArray(data.items) ? data.items : []);
+    setNotifsLoading(false);
+  }
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
@@ -99,6 +143,47 @@ export default function MePage() {
       <button type="button" onClick={logout} style={{ padding: "10px 12px", marginTop: 10 }}>
         退出登录
       </button>
+
+      <div style={{ marginTop: 28 }}>
+        <h2 style={{ marginBottom: 8 }}>我的发言</h2>
+        {myPostsLoading && <p>加载中...</p>}
+        {myPostsError && <p style={{ color: "#c00" }}>{myPostsError}</p>}
+        {!myPostsLoading && !myPostsError && myPosts.length === 0 && <p>暂无发言</p>}
+        {myPosts.map((p) => (
+          <div key={p.id} style={{ border: "1px solid #eee", borderRadius: 10, padding: 10, marginBottom: 8 }}>
+            <div style={{ color: "#666", fontSize: 12 }}>{formatTime(p.createdAt)}</div>
+            <div style={{ fontSize: 13, color: "#666" }}>
+              {p.replyToName ? `回复 @${p.replyToName}` : p.parentId ? "回复评论" : "顶层评论"}
+            </div>
+            <div style={{ marginTop: 6 }}>{p.deleted ? "该评论已删除" : p.content}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ marginTop: 24 }}>
+        <h2 style={{ marginBottom: 8 }}>通知</h2>
+        {notifsLoading && <p>加载中...</p>}
+        {notifsError && <p style={{ color: "#c00" }}>{notifsError}</p>}
+        {!notifsLoading && !notifsError && notifs.length === 0 && <p>暂无通知</p>}
+        {notifs.map((n, idx) => (
+          <div key={`${n.entryId}-${idx}`} style={{ border: "1px solid #eee", borderRadius: 10, padding: 10, marginBottom: 8 }}>
+            <div style={{ color: "#666", fontSize: 12 }}>{formatTime(n.createdAt)}</div>
+            {n.type === "comment" ? (
+              <>
+                <div style={{ fontSize: 13, color: "#666" }}>
+                  {(n.authorName || "有人") + " 回复了你"}
+                </div>
+                <div style={{ marginTop: 6 }}>{n.content}</div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: 13, color: "#666" }}>有人对你的发言作出反应</div>
+                <div style={{ marginTop: 6 }}>{n.value === 1 ? "👍 点赞" : "👎 点踩"}</div>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
     </main>
   );
 }

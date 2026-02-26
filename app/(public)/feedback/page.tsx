@@ -2,7 +2,7 @@
 
 import { useId } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { guestbookFetch } from "@/lib/guestbook/client";
+import { guestbookFetch, getOrCreateVisitorId } from "@/lib/guestbook/client";
 
 type GuestbookEntry = {
   id: string;
@@ -489,7 +489,10 @@ export default function FeedbackPage() {
   const [hasMore, setHasMore] = useState(true);
   const [replyMap, setReplyMap] = useState<Record<string, { items: GuestbookEntry[]; page: number; hasMore: boolean; loading: boolean; expanded: boolean }>>({});
   const [replyBoxOpen, setReplyBoxOpen] = useState<Record<string, boolean>>({});
-  const [announcements, setAnnouncements] = useState<Array<{ id: string; created_at: string; author_name: string | null; author_is_admin: boolean; content: string; content_type: string }>>([]);
+  const [announcements, setAnnouncements] = useState<
+    Array<{ id: string; created_at: string; author_name: string | null; author_is_admin: boolean; content: string; content_type: string }>
+  >([]);
+  const [announcementReacts, setAnnouncementReacts] = useState<Record<string, { counts: Record<string, number>; my: string | null }>>({});
   const [announceSide, setAnnounceSide] = useState<"left" | "right">("right");
   const [announceCollapsed, setAnnounceCollapsed] = useState(false);
   const [announceContent, setAnnounceContent] = useState("");
@@ -700,6 +703,15 @@ async function guardAuthOrThrow(res: Response, data: any) {
     if (res.ok && data?.success) setAnnouncements(data.items ?? []);
   }
 
+  async function loadAnnouncementReacts(ids: string[]) {
+    if (!ids.length) return;
+    const visitorId = getOrCreateVisitorId();
+    const headers = visitorId ? { "x-visitor-id": visitorId } : {};
+    const res = await fetch(`/api/feedback/announcements/reactions?ids=${ids.join(",")}`, { headers, cache: "no-store" });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data?.ok) setAnnouncementReacts(data.items ?? {});
+  }
+
   async function postAnnouncement() {
     if (!announceContent.trim()) return;
     const res = await fetch("/api/feedback/announcements", {
@@ -714,6 +726,23 @@ async function guardAuthOrThrow(res: Response, data: any) {
     }
     setAnnounceContent("");
     await loadAnnouncements();
+  }
+
+  async function reactAnnouncement(announcementId: string, emoji: string) {
+    const visitorId = getOrCreateVisitorId();
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (visitorId) headers["x-visitor-id"] = visitorId;
+    const current = announcementReacts[announcementId]?.my || null;
+    const next = current === emoji ? null : emoji;
+    const res = await fetch("/api/feedback/announcements/reactions", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ announcementId, value: next }),
+    });
+    if (res.ok) {
+      const ids = announcements.map((a) => a.id);
+      await loadAnnouncementReacts(ids);
+    }
   }
 
   const visibleEntries = useMemo(() => {
@@ -784,6 +813,11 @@ async function guardAuthOrThrow(res: Response, data: any) {
     void loadAnnouncements();
   }, []);
 
+  useEffect(() => {
+    if (announcements.length) void loadAnnouncementReacts(announcements.map((a) => a.id));
+  }, [announcements]);
+
+  const ANNOUNCE_EMOJIS = ["👍", "❤️", "🎉", "👀", "🤔"];
   const sidebar = (
     <aside className="w-full max-w-xs">
       <div className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
@@ -862,6 +896,28 @@ async function guardAuthOrThrow(res: Response, data: any) {
                       ) : (
                         <pre className="whitespace-pre-wrap">{a.content}</pre>
                       )}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {ANNOUNCE_EMOJIS.map((e) => {
+                        const reacts = announcementReacts[a.id];
+                        const count = reacts?.counts?.[e] || 0;
+                        const active = reacts?.my === e;
+                        return (
+                          <button
+                            key={e}
+                            type="button"
+                            onClick={() => reactAnnouncement(a.id, e)}
+                            className={[
+                              "rounded-full border px-2 py-0.5 text-xs transition",
+                              active ? "border-zinc-900 bg-zinc-900 text-white" : "border-zinc-200 bg-white text-zinc-700",
+                              "dark:border-zinc-700 dark:bg-black dark:text-zinc-200",
+                            ].join(" ")}
+                          >
+                            <span className="mr-1">{e}</span>
+                            {count}
+                          </button>
+                        );
+                      })}
                     </div>
                   </li>
                 ))}

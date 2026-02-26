@@ -353,6 +353,28 @@ create index if not exists feedback_announcements_created_at_idx
 
 alter table public.feedback_announcements enable row level security;
 
+create table if not exists public.feedback_announcement_reactions (
+  announcement_id uuid references public.feedback_announcements (id) on delete cascade,
+  visitor_id text not null,
+  user_id uuid references auth.users (id) on delete set null,
+  value text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (announcement_id, visitor_id)
+);
+
+create index if not exists feedback_announcement_reactions_announcement_idx
+  on public.feedback_announcement_reactions (announcement_id);
+create index if not exists feedback_announcement_reactions_visitor_idx
+  on public.feedback_announcement_reactions (visitor_id);
+
+alter table public.feedback_announcement_reactions enable row level security;
+
+drop trigger if exists trg_feedback_announcement_reactions_updated_at on public.feedback_announcement_reactions;
+create trigger trg_feedback_announcement_reactions_updated_at
+before insert or update on public.feedback_announcement_reactions
+for each row execute function public.set_updated_at();
+
 commit;
 
 -- 6) User profiles & email verification (注册流程)
