@@ -549,7 +549,7 @@ async function guardAuthOrThrow(res: Response, data: any) {
         msg.toLowerCase().includes("does not exist")
       ) {
         setNotice(
-          "留言板表尚未创建：请先在 Supabase 执行 `SUPABASE_SCHEMA.sql` 的 Guestbook 段落。"
+          "反馈中心数据表尚未创建：请先在 Supabase 执行 `SUPABASE_SCHEMA.sql` 的 Guestbook 段落。"
         );
       } else {
         setNotice(msg);
@@ -663,7 +663,7 @@ async function guardAuthOrThrow(res: Response, data: any) {
 }
 
   async function del(entryId: string) {
-  if (!confirm("确定删除这条留言吗？")) return;
+  if (!confirm("确定删除这条反馈吗？")) return;
 
   const res = await guestbookFetch(`/api/guestbook/entry/${entryId}`, { method: "DELETE" });
   const data = await res.json().catch(() => ({}));
@@ -930,13 +930,13 @@ async function guardAuthOrThrow(res: Response, data: any) {
   );
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-16">
+    <main className="feedback-theme mx-auto max-w-6xl px-6 py-16">
       <div className={["flex gap-6", announceSide === "left" ? "flex-row" : "flex-row-reverse"].join(" ")}>
         {sidebar}
         <div className="min-w-0 flex-1">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">留言板</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">反馈中心</h1>
           <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
             留下评论，分享想法，交流反馈。支持 Markdown 格式，尽情发挥吧（请登录并保持礼貌）！
           </p>
@@ -980,7 +980,7 @@ async function guardAuthOrThrow(res: Response, data: any) {
           type="text"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="搜索留言..."
+          placeholder="搜索反馈..."
           className="flex-1 min-w-48 rounded-full border border-zinc-200 bg-white px-4 py-1.5 text-sm outline-none focus:border-zinc-400 dark:border-zinc-800 dark:bg-zinc-950 dark:focus:border-zinc-600"
         />
         <button
@@ -995,7 +995,7 @@ async function guardAuthOrThrow(res: Response, data: any) {
       <div className="mt-6">
         <Editor
           placeholder="写点什么吧（支持 Markdown；也可以从 .txt/.md 文件导入）"
-          submitLabel="发布留言"
+          submitLabel="发布反馈"
           onSubmit={postRoot}
         />
       </div>
@@ -1007,7 +1007,7 @@ async function guardAuthOrThrow(res: Response, data: any) {
       <section className="mt-8 space-y-3">
         {visibleEntries.length === 0 ? (
           <div className="rounded-xl border border-dashed border-zinc-300 p-8 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
-            暂无留言
+            暂无反馈
           </div>
         ) : (
           visibleEntries.map((e) => {

@@ -48,18 +48,31 @@ export default function LoginPage() {
 
   return (
     <main style={{ padding: 24, maxWidth: 520 }}>
-      <h1>登录 / 注册</h1>
+      <h1>身份入口</h1>
 
       <div style={{ display: "grid", gap: 10, marginTop: 16 }}>
-        <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="邮箱" style={{ padding: 10 }} autoComplete="email" />
-        <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="密码" type="password" style={{ padding: 10 }} autoComplete="current-password" />
+        <input
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="邮箱"
+          style={{ padding: 10, borderRadius: 10 }}
+          autoComplete="email"
+        />
+        <input
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="密码"
+          type="password"
+          style={{ padding: 10, borderRadius: 10 }}
+          autoComplete="current-password"
+        />
 
         <div style={{ display: "flex", gap: 10 }}>
-          <button type="button" onClick={signIn} disabled={loading} style={{ padding: "10px 12px" }}>
+          <button type="button" onClick={signIn} disabled={loading} style={{ padding: "10px 12px", borderRadius: 10 }}>
             {loading ? "处理中..." : "登录"}
           </button>
-          <button type="button" onClick={() => router.push("/register")} disabled={loading} style={{ padding: "10px 12px" }}>
-            注册
+          <button type="button" onClick={() => router.push("/register")} disabled={loading} style={{ padding: "10px 12px", borderRadius: 10 }}>
+            创建身份
           </button>
         </div>
 

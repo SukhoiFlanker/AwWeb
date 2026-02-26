@@ -62,11 +62,8 @@ function isApiErr(v: unknown): v is ApiErr {
 
 function formatUser(u: AdminUser) {
   const name = u.name?.trim() || "";
-  const email = u.email?.trim() || "";
-  if (name && email) return `${name} <${email}>`;
   if (name) return name;
-  if (email) return email;
-  return u.id;
+  return "未命名用户";
 }
 
 function snippet(s: string, n = 160) {
@@ -315,12 +312,12 @@ export default function AdminPostsPage() {
   return (
     <main style={{ padding: 24 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-        <h1>Admin - Users</h1>
+        <h1>管理中枢 · 用户</h1>
         <button onClick={logout}>退出登录</button>
       </div>
 
       <div style={{ display: "flex", gap: 12, margin: "12px 0" }}>
-        <Link href="/admin/posts">用户（Users）</Link>
+        <Link href="/admin/posts">用户</Link>
       </div>
 
       {errorMsg && (
@@ -333,7 +330,7 @@ export default function AdminPostsPage() {
         <aside
           style={{
             width: 360,
-            border: "1px solid #eee",
+            border: "1px solid #1f2937",
             borderRadius: 12,
             padding: 12,
             height: "calc(100vh - 170px)",
@@ -341,12 +338,12 @@ export default function AdminPostsPage() {
           }}
         >
           <div style={{ display: "grid", gap: 10 }}>
-            <h2 style={{ fontSize: 14, margin: 0 }}>已注册用户</h2>
+            <h2 style={{ fontSize: 14, margin: 0 }}>用户列表</h2>
             <input
               placeholder="搜索用户（id/email/name）"
               value={userSearch}
               onChange={(e) => setUserSearch(e.target.value)}
-              style={{ padding: "8px 10px", border: "1px solid #ddd", borderRadius: 8 }}
+              style={{ padding: "8px 10px", border: "1px solid #1f2937", borderRadius: 8, background: "#111827", color: "#f8fafc" }}
             />
           </div>
 
@@ -359,9 +356,9 @@ export default function AdminPostsPage() {
                   textAlign: "left",
                   padding: 10,
                   borderRadius: 10,
-                  border: "1px solid #ddd",
-                  background: selectedUserId === u.id ? "#111" : "#fff",
-                  color: selectedUserId === u.id ? "#fff" : "#111",
+                  border: "1px solid #1f2937",
+                  background: selectedUserId === u.id ? "#ef4444" : "#111827",
+                  color: "#f8fafc",
                 }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
@@ -373,13 +370,13 @@ export default function AdminPostsPage() {
                   </span>
                 </div>
                 <div style={{ marginTop: 4, fontFamily: "monospace", fontSize: 11, opacity: 0.8 }}>
-                  {u.id}
+                  发言 {u.posts.active} · 对话 {u.chat_sessions.count}
                 </div>
               </button>
             ))}
 
             {!loading && filteredUsers.length === 0 && (
-              <div style={{ fontSize: 12, color: "#666" }}>
+              <div style={{ fontSize: 12, color: "#94a3b8" }}>
                 没有匹配的用户
               </div>
             )}
@@ -388,14 +385,14 @@ export default function AdminPostsPage() {
 
         <section style={{ flex: 1, minWidth: 0 }}>
           {!selectedUser ? (
-            <p style={{ color: "#666" }}>请选择一个用户</p>
+            <p style={{ color: "#94a3b8" }}>请选择一个用户</p>
           ) : (
             <div style={{ display: "grid", gap: 12 }}>
-              <div style={{ padding: 12, border: "1px solid #eee", borderRadius: 12 }}>
+              <div style={{ padding: 12, border: "1px solid #1f2937", borderRadius: 12, background: "#0f172a" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
                   <div style={{ display: "grid" }}>
                     <strong>{formatUser(selectedUser)}</strong>
-                    <span style={{ marginTop: 4, fontFamily: "monospace", fontSize: 12, color: "#666" }}>
+                    <span style={{ marginTop: 4, fontFamily: "monospace", fontSize: 12, color: "#94a3b8" }}>
                       {selectedUser.id}
                     </span>
                   </div>
@@ -405,22 +402,22 @@ export default function AdminPostsPage() {
                       onClick={() => setPanel("posts")}
                       style={{
                         padding: "6px 10px",
-                        border: "1px solid #ddd",
+                        border: "1px solid #1f2937",
                         borderRadius: 8,
-                        background: panel === "posts" ? "#111" : "#fff",
-                        color: panel === "posts" ? "#fff" : "#111",
+                        background: panel === "posts" ? "#ef4444" : "#111827",
+                        color: "#f8fafc",
                       }}
                     >
-                      发言
+                      发言记录
                     </button>
                     <button
                       onClick={() => setPanel("chats")}
                       style={{
                         padding: "6px 10px",
-                        border: "1px solid #ddd",
+                        border: "1px solid #1f2937",
                         borderRadius: 8,
-                        background: panel === "chats" ? "#111" : "#fff",
-                        color: panel === "chats" ? "#fff" : "#111",
+                        background: panel === "chats" ? "#ef4444" : "#111827",
+                        color: "#f8fafc",
                       }}
                     >
                       对话记录
@@ -433,17 +430,17 @@ export default function AdminPostsPage() {
                 <div style={{ display: "grid", gap: 12 }}>
                   <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                     <input
-                      placeholder="搜索发言内容（q）"
+                      placeholder="搜索发言内容"
                       value={q}
                       onChange={(e) => setQ(e.target.value)}
-                      style={{ flex: 1, minWidth: 220, padding: "8px 10px", border: "1px solid #ddd", borderRadius: 8 }}
+                      style={{ flex: 1, minWidth: 220, padding: "8px 10px", border: "1px solid #1f2937", borderRadius: 8, background: "#111827", color: "#f8fafc" }}
                     />
 
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                       <button disabled={postPage <= 1 || loading} onClick={() => setPostPage((p) => Math.max(1, p - 1))}>
                         上一页
                       </button>
-                      <span style={{ fontSize: 12, color: "#666" }}>
+                      <span style={{ fontSize: 12, color: "#94a3b8" }}>
                         第 {postPage} / {postTotalPages} 页（共 {postTotal} 条）
                       </span>
                       <button
@@ -456,12 +453,12 @@ export default function AdminPostsPage() {
                   </div>
 
                   {loading && <p>加载中...</p>}
-                  {!loading && posts.length === 0 && <p>暂无发言</p>}
+                  {!loading && posts.length === 0 && <p>暂无发言记录</p>}
 
                   {!loading && posts.length > 0 && (
                     <ul style={{ marginTop: 0, display: "grid", gap: 12 }}>
                       {posts.map((p) => (
-                        <li key={p.id} style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
+                        <li key={p.id} style={{ border: "1px solid #1f2937", borderRadius: 12, padding: 12, background: "#0f172a" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
                             <div style={{ display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
                               <span
@@ -469,7 +466,7 @@ export default function AdminPostsPage() {
                                   fontSize: 12,
                                   padding: "2px 8px",
                                   borderRadius: 999,
-                                  border: "1px solid #ddd",
+                                  border: "1px solid #1f2937",
                                   background: p.source === "feedback" ? "#f7f7ff" : "#f7fffb",
                                 }}
                               >
@@ -479,15 +476,15 @@ export default function AdminPostsPage() {
                                 {selectedUser.name || selectedUser.email || selectedUser.id}
                               </span>
                             </div>
-                            <div style={{ fontSize: 12, color: "#666" }}>
+                            <div style={{ fontSize: 12, color: "#94a3b8" }}>
                               {p.created_at ? new Date(p.created_at).toLocaleString() : "-"}
                             </div>
                           </div>
 
-                          <div style={{ marginTop: 10, color: "#111" }}>{snippet(p.content)}</div>
+                          <div style={{ marginTop: 10, color: "#f8fafc" }}>{snippet(p.content)}</div>
 
                           <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-                            <div style={{ fontSize: 12, color: "#666" }}>
+                            <div style={{ fontSize: 12, color: "#94a3b8" }}>
                               ID: <span style={{ fontFamily: "monospace" }}>{p.id}</span>
                             </div>
                             <div style={{ display: "flex", gap: 8 }}>
@@ -506,7 +503,7 @@ export default function AdminPostsPage() {
                       <button disabled={chatPage <= 1 || chatLoading} onClick={() => setChatPage((p) => Math.max(1, p - 1))}>
                         上一页
                       </button>
-                      <span style={{ fontSize: 12, color: "#666" }}>
+                      <span style={{ fontSize: 12, color: "#94a3b8" }}>
                         第 {chatPage} / {chatTotalPages} 页（共 {chatTotal} 个会话）
                       </span>
                       <button
@@ -519,7 +516,7 @@ export default function AdminPostsPage() {
                   </div>
 
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: 12, alignItems: "start" }}>
-                    <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
+                    <div style={{ border: "1px solid #1f2937", borderRadius: 12, padding: 12, background: "#0f172a" }}>
                       <h2 style={{ fontSize: 14, margin: 0 }}>会话列表</h2>
                       {chatLoading && sessions.length === 0 ? <p>加载中...</p> : null}
                       {!chatLoading && sessions.length === 0 ? <p>暂无会话</p> : null}
@@ -535,9 +532,9 @@ export default function AdminPostsPage() {
                                   textAlign: "left",
                                   padding: 10,
                                   borderRadius: 10,
-                                  border: "1px solid #ddd",
-                                  background: selectedSessionId === s.id ? "#111" : "#fff",
-                                  color: selectedSessionId === s.id ? "#fff" : "#111",
+                                  border: "1px solid #1f2937",
+                                  background: selectedSessionId === s.id ? "#ef4444" : "#111827",
+                                  color: "#f8fafc",
                                 }}
                               >
                                 <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
@@ -561,10 +558,10 @@ export default function AdminPostsPage() {
                       ) : null}
                     </div>
 
-                    <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 12, minHeight: 220 }}>
+                    <div style={{ border: "1px solid #1f2937", borderRadius: 12, padding: 12, minHeight: 220, background: "#0f172a" }}>
                       <h2 style={{ fontSize: 14, margin: 0 }}>消息</h2>
                       {!selectedSessionId ? (
-                        <p style={{ color: "#666" }}>选择一个会话查看完整对话</p>
+                        <p style={{ color: "#94a3b8" }}>选择一个会话查看完整对话</p>
                       ) : chatLoading && chatMessages.length === 0 ? (
                         <p>加载中...</p>
                       ) : chatMessages.length === 0 ? (
@@ -572,10 +569,10 @@ export default function AdminPostsPage() {
                       ) : (
                         <ul style={{ marginTop: 10, display: "grid", gap: 10 }}>
                           {chatMessages.map((m) => (
-                            <li key={m.id} style={{ padding: 10, border: "1px solid #eee", borderRadius: 10 }}>
+                            <li key={m.id} style={{ padding: 10, border: "1px solid #1f2937", borderRadius: 10, background: "#111827" }}>
                               <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
                                 <strong>{m.role}</strong>
-                                <span style={{ fontSize: 12, color: "#666" }}>
+                                <span style={{ fontSize: 12, color: "#94a3b8" }}>
                                   {m.created_at ? new Date(m.created_at).toLocaleString() : "-"}
                                 </span>
                               </div>

@@ -43,10 +43,19 @@ export default function ChatPage() {
   async function loadHistory(sid: string) {
     const res = await fetch(`/api/chat/history?sessionId=${encodeURIComponent(sid)}`, {
       headers: chatKey ? { "x-chat-key": chatKey } : {},
+      credentials: "include",
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data?.success) {
-      setMsgs([{ role: "assistant", content: `❌ 加载历史失败：${data?.error || res.status}` }]);
+      const msg = data?.error || res.status;
+      if (res.status === 401 || res.status === 403) {
+        setSessionId(null);
+        localStorage.removeItem("chat_session_id");
+        const u = new URL(window.location.href);
+        u.searchParams.delete("sid");
+        window.history.replaceState({}, "", u.toString());
+      }
+      setMsgs([{ role: "assistant", content: `❌ 加载历史失败：${msg}` }]);
       return;
     }
 
@@ -73,6 +82,7 @@ export default function ChatPage() {
     const res = await fetch("/api/chat/sessions", {
       cache: "no-store",
       headers: chatKey ? { "x-chat-key": chatKey } : {},
+      credentials: "include",
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data?.success) {
@@ -229,22 +239,22 @@ export default function ChatPage() {
   return (
     <main style={{ padding: 24, maxWidth: 1100 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-        <h1>Chat</h1>
-        <button onClick={newChat}>新会话</button>
+        <h1>智能对话</h1>
+        <button onClick={newChat}>新对话</button>
       </div>
 
       <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "280px 1fr", gap: 16 }}>
-        <aside style={{ border: "1px solid #eee", borderRadius: 10, padding: 12 }}>
+        <aside style={{ border: "1px solid #1f2937", borderRadius: 10, padding: 12, background: "#0f172a" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-            <strong style={{ fontSize: 14 }}>我的对话</strong>
+            <strong style={{ fontSize: 14 }}>对话记录</strong>
             <button onClick={loadSessions} style={{ fontSize: 12 }}>
               刷新
             </button>
           </div>
-          {sessionsLoading && <p style={{ fontSize: 12, color: "#666" }}>加载中...</p>}
-          {sessionsError && <p style={{ fontSize: 12, color: "#c00" }}>{sessionsError}</p>}
+          {sessionsLoading && <p style={{ fontSize: 12, color: "#94a3b8" }}>加载中...</p>}
+          {sessionsError && <p style={{ fontSize: 12, color: "#ef4444" }}>{sessionsError}</p>}
           {!sessionsLoading && !sessionsError && sessions.length === 0 && (
-            <p style={{ fontSize: 12, color: "#666" }}>暂无会话</p>
+            <p style={{ fontSize: 12, color: "#94a3b8" }}>暂无会话</p>
           )}
           <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
             {sessions.map((s) => (
@@ -262,15 +272,15 @@ export default function ChatPage() {
                   textAlign: "left",
                   padding: 8,
                   borderRadius: 8,
-                  border: "1px solid #ddd",
-                  background: s.id === sessionId ? "#111" : "#fff",
-                  color: s.id === sessionId ? "#fff" : "#111",
+                  border: "1px solid #1f2937",
+                  background: s.id === sessionId ? "#ef4444" : "#111827",
+                  color: "#f8fafc",
                 }}
               >
                 <div style={{ fontSize: 12, fontWeight: 600 }}>
                   {s.title || "(无标题)"}
                 </div>
-                <div style={{ fontSize: 11, opacity: 0.7 }}>
+                <div style={{ fontSize: 11, opacity: 0.7, color: "#cbd5f5" }}>
                   {s.last_message_at ? new Date(s.last_message_at).toLocaleString() : "-"}
                 </div>
               </button>
@@ -280,7 +290,7 @@ export default function ChatPage() {
 
         <section style={{ minWidth: 0 }}>
           <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 8 }}>
-            <label style={{ fontSize: 12, color: "#666" }}>模型</label>
+            <label style={{ fontSize: 12, color: "#94a3b8" }}>模型选择</label>
             <select
               value={modelId}
               onChange={(e) => setModelId(e.target.value)}
@@ -292,21 +302,21 @@ export default function ChatPage() {
                 </option>
               ))}
             </select>
-            <span style={{ fontSize: 12, color: "#666" }}>
+            <span style={{ fontSize: 12, color: "#94a3b8" }}>
               Session: {sessionId ?? "(new)"}
             </span>
           </div>
 
           <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
-            {msgs.length === 0 && <p>暂无消息（你可以开始聊天）</p>}
+            {msgs.length === 0 && <p>暂无消息（你可以开始对话）</p>}
             {msgs.map((m, i) => (
               <div
                 key={i}
                 style={{
                   padding: 12,
-                  border: "1px solid #ddd",
+                  border: "1px solid #1f2937",
                   borderRadius: 8,
-                  background: m.role === "user" ? "#f7f7f7" : "white",
+                  background: m.role === "user" ? "#111827" : "#0f172a",
                 }}
               >
                 <strong>{m.role === "user" ? "你" : "AI"}：</strong>
@@ -319,7 +329,7 @@ export default function ChatPage() {
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="输入一句话..."
+              placeholder="输入消息..."
               style={{ flex: 1, padding: 10 }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") send();

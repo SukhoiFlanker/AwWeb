@@ -42,17 +42,18 @@ export default function AdminLoginPage() {
 
   return (
     <main style={{ padding: 24, maxWidth: 520 }}>
-      <h1>Admin Login</h1>
+      <h1>管理中枢登录</h1>
 
       <form
         onSubmit={onSubmit}
-        style={{ display: "grid", gap: 12, marginTop: 16 }}
+        style={{ display: "grid", gap: 12, marginTop: 16, padding: 16, border: "1px solid #1f2937", borderRadius: 12, background: "#0f172a" }}
       >
         <input
           placeholder="管理员邮箱"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           autoComplete="email"
+          style={{ padding: 10, borderRadius: 10 }}
         />
 
         <input
@@ -61,9 +62,10 @@ export default function AdminLoginPage() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           autoComplete="current-password"
+          style={{ padding: 10, borderRadius: 10 }}
         />
 
-        <button disabled={loading} type="submit">
+        <button disabled={loading} type="submit" style={{ padding: "10px 12px", borderRadius: 10, background: "#ef4444", border: "1px solid #ef4444" }}>
           {loading ? "登录中..." : "登录"}
         </button>
       </form>

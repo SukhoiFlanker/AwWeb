@@ -1,6 +1,85 @@
 @import "tailwindcss";
 
+:root {
+  --bg: #0b0b0f;
+  --panel: #0f172a;
+  --panel-2: #111827;
+  --border: #1f2937;
+  --text: #f8fafc;
+  --muted: #94a3b8;
+  --accent: #ef4444;
+  --accent-2: #fecaca;
+}
+
 body {
-  background: #f9fafb;
-  color: #111827;
+  background: var(--bg);
+  color: var(--text);
+}
+
+a {
+  color: inherit;
+}
+
+input,
+textarea,
+select {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+button {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+button:hover {
+  border-color: rgba(239, 68, 68, 0.6);
+}
+
+.feedback-theme .bg-white,
+.feedback-theme .bg-zinc-50,
+.feedback-theme .bg-zinc-950,
+.feedback-theme .bg-black {
+  background: var(--panel-2) !important;
+}
+
+.feedback-theme .border-zinc-200,
+.feedback-theme .border-zinc-300,
+.feedback-theme .border-zinc-700,
+.feedback-theme .border-zinc-800,
+.feedback-theme .border-dashed {
+  border-color: var(--border) !important;
+}
+
+.feedback-theme .text-zinc-600,
+.feedback-theme .text-zinc-500,
+.feedback-theme .text-zinc-400,
+.feedback-theme .text-zinc-700,
+.feedback-theme .text-zinc-900 {
+  color: var(--text) !important;
+  opacity: 0.85;
+}
+
+.feedback-theme [class~="dark:text-zinc-400"],
+.feedback-theme [class~="dark:text-zinc-200"],
+.feedback-theme [class~="dark:text-zinc-50"] {
+  color: var(--text) !important;
+}
+
+.feedback-theme [class~="dark:bg-zinc-950"],
+.feedback-theme [class~="dark:bg-black"],
+.feedback-theme [class~="dark:bg-zinc-900"] {
+  background: var(--panel-2) !important;
+}
+
+.feedback-theme [class~="dark:border-zinc-800"],
+.feedback-theme [class~="dark:border-zinc-700"] {
+  border-color: var(--border) !important;
+}
+
+.feedback-theme [class~="dark:text-red-400"],
+.feedback-theme .text-red-600 {
+  color: var(--accent) !important;
 }

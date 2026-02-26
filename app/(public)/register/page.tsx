@@ -107,7 +107,7 @@ export default function RegisterPage() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-xl flex-col gap-4 px-6 py-16">
-      <h1 className="text-2xl font-semibold tracking-tight">注册</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">创建身份</h1>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">
         邮箱注册需要验证码。密码至少6位，且必须包含字母与数字。
       </p>
@@ -162,13 +162,13 @@ export default function RegisterPage() {
             disabled={loading}
             className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-50 dark:text-black dark:hover:bg-zinc-200"
           >
-            {loading ? "处理中..." : "注册"}
+            {loading ? "处理中..." : "创建身份"}
           </button>
           <Link
             href="/login"
             className="text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
           >
-            已有账号？去登录
+            已有身份？进入登录
           </Link>
         </div>
 

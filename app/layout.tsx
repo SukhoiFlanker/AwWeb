@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "个人网站",
-  description: "AI 对话 + 留言系统 + 管理后台",
+  title: "Awliver · 个人控制台",
+  description: "智能对话 + 反馈中心 + 管理中枢",
 };
 
 export default function RootLayout({
